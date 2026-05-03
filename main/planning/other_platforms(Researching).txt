@@ -1,0 +1,77 @@
+Algorithms and Methods for Plagiarism and AI Detection on the Most Popular Platforms
+Методы и алгоритм на других платформах
+1. Turnitin
+The most widely used platform in academic environments.
+Plagiarism Detection Methods:
+Text Fingerprinting
+Очень похож на мой
+Text is broken into shingles (n-grams):
+"the quick brown fox" →
+["the quick brown", "quick brown fox"]
+↓
+Each shingle is hashed → compared against the database
+Databases used for comparison:
+Billions of web pages
+Academic journals (Elsevier, Springer, etc.)
+Previously submitted student papers
+AI Writing Detection:
+Turnitin added an AI detector in 2023.
+Perplexity:
+Measures how "predictable" the text is to a language model
+Human writing:  high perplexity (unpredictable)
+AI writing:     low perplexity  (highly predictable) не оч юзабельно
+Burstiness:
+Human:  short and long sentences mixed together → high burstiness
+AI:     sentences of roughly equal length        → low burstiness
+2. MOSS (Stanford)
+Specializes specifically in code, widely used in universities.
+The Winnowing Algorithm:
+1. Code is normalized:
+- Comments removed
+- Variables renamed to generic names
+- Whitespace stripped
+2. K-grams generated from tokens:
+int a = 5; → [int, var, =, num] → hash
+3. Winnowing window:
+From each window of size w, the minimum
+hash is selected → "file fingerprint"
+4. Fingerprints of two files are compared →
+percentage of overlap
+Normalization is the key step:
+Original:          Student copy:
+int score = 10;    int points = 10;
+↓ normalization
+int VAR = NUM;     int VAR = NUM;   ← identical!
+Алгоритм аст вроде взят с этого
+3. JPlag
+Another popular code plagiarism detector (Java, C++, Python, etc.).
+Token-Based Comparison + Greedy String Tiling:
+Step 1 — Tokenization:
+Code → list of tokens (not raw text)
+"for(int i=0; i<n; i++)" →
+[FOR, LPAREN, TYPE, VAR, ASSIGN, NUM ...]
+Step 2 — Greedy String Tiling (GST):
+Finds the longest matching token
+subsequences between two files
+Step 3 — Similarity score:
+similarity = (2 × matched_tokens) /
+(tokens_A + tokens_B)
+Advantage over MOSS: better at detecting reordered code blocks.
+4. Copyleaks
+A modern platform with AI detection support.
+For Text — NLP Methods:
+Semantic Similarity:
+Text → vector representation (embeddings)
+Two texts → cosine distance between vectors
+cos(θ) = (A · B) / (|A| × |B|)
+Close to 1 → texts are semantically similar
+even if the words are different (paraphrasing)
+For AI Detection:
+Token Probability Statistics:
+Log-probability analysis:
+P(word | context) — how likely is
+this word given the surrounding context?
+AI picks high-probability words →
+average log-probability is high
+Humans pick unexpected words →
+average log-probability is low

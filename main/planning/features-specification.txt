@@ -1,0 +1,493 @@
+SylLab
+Anti-Plagiarism Code Forensics Platform
+Features Specification Document
+Version 1.0 | Express (Node.js) + Prisma + PostgreSQL
+1. Project Overview
+SylLab is a forensic code analysis platform designed to detect AI-assisted code generation among students. Unlike traditional plagiarism checkers that detect copy-paste, SylLab establishes proctored authentic baselines during Week 1 and compares subsequent submissions against expected learning progression curves. The system flags anomalies such as 'impossible jumps' — advanced architectural patterns appearing without evidence of prerequisite intermediate patterns.
+2. User Roles & Actors
+2.1 Role Overview
+2.2 Student
+Register and create a profile linked to a specific course section
+Participate in the proctored Week 1 baseline session (network-isolated, 30-minute in-class coding)
+Submit code assignments for forensic analysis
+View personal sophistication score and progression dashboard
+Receive notifications when flagged for oral review
+View flagged submission details and explanation of anomaly detected
+Appeal flagged submissions with written justification
+2.3 Instructor
+Create and manage courses and cohorts
+Configure weekly expected sophistication targets and progression curves
+Trigger and monitor proctored baseline sessions
+View Instructor Action Queue — prioritized list of flagged students requiring oral interviews
+View detailed forensic analysis report per submission (delta scores, genealogy violations, cohort percentile)
+Mark oral interview outcomes (cleared / confirmed / escalated)
+Export cohort reports to CSV/PDF
+Configure Gemini API integration for LLM-generated interview guidance
+View cohort-wide sophistication distribution heatmaps per week
+2.4 Admin
+Manage all users (create, disable, reassign roles)
+Configure global scoring thresholds (default: 1.5 / 2.0 / 2.5)
+Monitor system health dashboard (queue depth, API latency, error rates)
+Manage prerequisite dependency graph (add/remove technique → prerequisite mappings)
+Access full audit log of all system events
+Manage environment configuration and secret rotation
+2.5 Proctor
+Initiate and terminate proctored baseline sessions
+Confirm network isolation status of session
+Lock submissions after session ends (immutability enforcement)
+View session attendance roster
+3. Feature List by Role
+3.1 Authentication & Access
+JWT-based authentication for all roles
+Role-based access control (RBAC) enforced at middleware level
+Session expiry and token refresh mechanism
+Password reset via email (SMTP integration)
+3.2 Proctored Baseline Capture (Week 1 Fingerprinting)
+Instructor/Proctor creates a proctored session with a start/end time window
+Student joins session using a unique session code
+System records network isolation confirmation flag set by proctor
+Student submits code within the session window
+System immediately computes 15+ AST-derived baseline metrics from submitted code
+Baseline record is cryptographically hashed (SHA-256 of content) and marked immutable
+No modifications allowed after session lock — enforced at database level (updatedAt guard)
+Abstract Syntax Tree
+// Пример кода студента:
+function add(a, b) { return a + b; }
+// AST-представление (упрощённо):
+FunctionDeclaration
+└── Identifier: "add"
+└── Params: [a, b]
+└── BlockStatement
+└── ReturnStatement
+└── BinaryExpression (+)
+С помощью Babel (для JS/TS) строится такое дерево, и по нему можно подсчитывать паттерны: есть ли try/catch, используются ли классы, декораторы, дженерики TypeScript и т.д.
+Using Babel (for JS/TS), such a tree is built, and it can be used to calculate patterns: whether there is a try/catch, whether classes, decorators, TypeScript generics are used, etc.
+Система не сравнивает код напрямую (текст на текст). Вместо этого она сравнивает числовые метрики и статистические показатели, извлечённые из кода. Это ключевое отличие от обычных систем антиплагиата.
+3.3 Sophistication Scoring Engine
+Parse submitted JavaScript/TypeScript code using AST analysis
+Compute score (0-100) across 5 major dimensions:
+Error handling tier (0-5 points)
+Architectural tier (0-5 points)
+Type safety tier (0-3 points)
+Advanced techniques score (0-5 points)
+Code organization & naming verbosity (0-2 points)
+Score stored with full metric breakdown (each of 15+ sub-indicators stored individually)
+3.4 One-Shot Comparison Engine
+Compare any single submission against Week 1 baseline (no git history required)
+Calculate 'compressed progression weeks' = (current_score - baseline_score) / expected_weekly_increment
+Generate trajectory delta z-score: (current - expected) / historical_std
+Compute ensemble risk score (weighted sum of three signals)
+Return human-readable explanation of each signal contribution
+3.5 Technique Genealogy Validation
+Maintain prerequisite dependency graph in database
+Examples: circuit_breaker requires [decorators, context_managers]; metaclass requires [basic_class, inheritance]
+For each submission, detect all advanced techniques present
+Verify each prerequisite technique appears in student history OR same submission (for one-shot mode)
+Assign +0.5 penalty per missing prerequisite to ensemble score
+Report specific violations: 'Used circuit_breaker without evidence of decorator mastery'
+3.6 Cohort Comparison Engine
+Aggregate all sophistication scores for a given course + week
+Calculate percentile rank of student submission using PostgreSQL PERCENT_RANK()
+Identify outliers: students above 90th percentile contribute non-zero cohort signal
+Calculate z-score of cohort distribution (STDDEV, AVG via PostgreSQL window functions)
+Cohort statistics cached in Redis with TTL of 1 hour (recalculated on new submissions)
+3.7 Instructor Action Queue
+Automatically populate queue when ensemble score >= 1.5
+Priority ordering: Score >= 2.5 (Critical) → Score >= 2.0 (Significant) → Score >= 1.5 (Monitor)
+Each queue item shows: student name, week, ensemble score, top 3 anomaly reasons
+Instructor can click into full forensic report per submission
+LLM-generated interview question suggestions (Gemini 3.1 Flash Lite) per flagged submission
+Instructor records interview outcome: Cleared / Confirmed AI-Assisted / Escalated
+3.8 Historical Trajectory Tracking (Extra Credit)
+Track all submissions over time per student per course
+Detect regression patterns: Week 5 score lower than Week 4 (unusual drop)
+Detect acceleration patterns: sudden large jumps across multiple consecutive weeks
+Historical standard deviation used as dynamic std in z-score calculation (instead of default)
+3.9 Git History Forensics (Extra Credit)
+Accept git repository upload or URL
+Parse git log --numstat to extract per-commit line additions/deletions and timestamps
+Detect 'big bang' pattern: single commit containing >80% of total code
+Calculate temporal entropy using Shannon entropy formula on commit timestamp distribution
+Git score adds 10% weight to ensemble (adjusted weights: 45/25/15/10/5)
+4. Business Workflows
+4.1 Week 1 Proctored Session Workflow
+Instructor creates a course and configures Week 1 session (date/time window)
+Proctor confirms in-class attendance and network isolation
+Instructor opens session — system generates unique session code
+Students join session using code within the time window
+Students write code in their local environment (offline) for 30 minutes
+Students upload code file before session close
+System runs AST analysis and stores baseline metrics with SHA-256 hash
+Proctor locks the session — no further uploads accepted
+Baseline record flagged as immutable in database
+4.2 Assignment Submission & Analysis Workflow
+Instructor creates an assignment with week number and expected sophistication target
+Student uploads code file to the submission endpoint
+System validates file (language detection, size limit, syntax check)
+System runs AST-based sophistication scoring (15+ metrics)
+System fetches student's Week 1 baseline from database
+Trajectory delta calculated: z-score vs. expected progression
+Genealogy validation: scan codebase for prerequisite violations
+Cohort statistics fetched from Redis cache (or recomputed if stale)
+Ensemble score computed: 0.5×trajectory + 0.3×genealogy + 0.2×cohort
+If score >= 1.5: entry created in Instructor Action Queue
+If score >= 2.5: mandatory oral interview flag set, student notified
+Full forensic report stored and accessible to instructor
+4.3 Instructor Review Workflow
+Instructor opens Action Queue, sorted by ensemble score (highest first)
+Clicks on flagged student — opens Forensic Report page
+Reviews: trajectory delta breakdown, genealogy violations list, cohort percentile, LLM interview suggestions
+Schedules and conducts oral explanation interview
+Records outcome in system: Cleared / Confirmed / Escalated
+If Confirmed: can add note to student record and notify course coordinator
+Queue item marked resolved; student dashboard updated
+4.4 LLM Interview Guidance Workflow
+Triggered synchronously when instructor views a flagged submission detail page
+System constructs prompt containing: technique violations list, sophistication jump summary, week number
+Calls Gemini 3.1 Flash Lite API with rate limiting (max 10 req/min per instructor)
+Returns 3-5 targeted interview questions focusing on specific anomalies
+Questions displayed alongside forensic report
+Result cached per submission_id to avoid duplicate API calls
+5. Constraints & Business Rules
+5.1 Baseline Immutability
+A student may only have ONE baseline per course
+Baseline cannot be updated after the session is locked by proctor
+Any attempt to modify baseline returns HTTP 403 with audit log entry
+Content hash verified on each comparison — mismatch triggers tamper alert
+5.2 Scoring Rules
+Ensemble score thresholds are global defaults but can be overridden per course by instructor
+Score < 1.5: Normal — no action
+1.5 <= Score < 2.0: Minor deviation — monitor (appears in queue, low priority)
+2.0 <= Score < 2.5: Significant escalation — flagged for review
+Score >= 2.5: Critical anomaly — mandatory oral interview, student notified automatically
+Genealogy penalty: +0.5 per missing prerequisite, capped at +2.0 total
+5.3 Session Rules
+A student cannot submit a baseline outside the active session window
+Session window cannot be reopened after proctor locks it
+A student cannot submit an assignment without an existing baseline for that course
+File size limit: 5MB per submission
+Supported languages: JavaScript, TypeScript (AST via Babel)
+5.4 Cohort Rules
+Cohort statistics are only meaningful with >= 5 students in the dataset
+If cohort size < 5 for a given week, cohort signal weight is redistributed to trajectory delta
+Outlier threshold is fixed at 90th percentile (configurable by Admin)
+5.5 LLM Integration Rules
+Gemini API key stored in environment variable — never hardcoded
+Rate limit: 10 requests per minute per instructor (Redis token bucket)
+LLM response cached per submission_id (TTL: 24 hours in Redis)
+If Gemini API fails: return graceful fallback ('LLM guidance unavailable — please review manually')
+LLM is advisory only — no automated decisions based on LLM output
+5.6 Data Retention
+All submission analyses retained indefinitely (audit trail)
+Oral interview outcomes retained as append-only records
+Audit log entries cannot be deleted — only appended
+В целом какие алгоритмы и методы я буду использовать;
+In general, what algorithms and methods will I use?
+The system does not compare code directly (text to text). Instead, it compares numerical metrics and statistical indicators extracted from the code. This is the key difference from conventional plagiarism detection systems.
+Full Comparison Chain
+Step 1 — The Baseline "Fingerprint" (Week 1)
+Student code (week 1, proctored session)
+↓
+AST analysis → 15+ metrics
+↓
+Saved to DB as BASELINE:
+{
+error_handling_score: 1,
+architectural_score: 2,
+type_safety_score: 0,
+advanced_techniques: 0,
+organization_score: 1,
+total_score: 30,        ← final score
+sha256_hash: "a3f9..."  ← tamper protection
+}
+Step 2 — New Submission (Week N)
+Student code (week 4, new assignment)
+↓
+Same AST analysis → same 15+ metrics
+↓
+{
+error_handling_score: 4,
+architectural_score: 5,
+type_safety_score: 3,
+advanced_techniques: 4,
+organization_score: 2,
+total_score: 75         ← final score
+}
+Step 3 — Three Comparison Algorithms Running Simultaneously
+Algorithm 1: Trajectory Z-Score (Primary)
+This is a statistical comparison — measuring how far the current progress deviates from what is expected.
+Expected score at week N:
+expected = baseline_score + (week_number × expected_weekly_increment)
+expected = 30 + (4 × 5) = 50
+Deviation Z-score:
+z = (current_score - expected_score) / std_deviation
+z = (75 - 50) / 8 = 3.125
+Interpretation:
+|z| < 1.5   →  Normal progress
+|z| 1.5–2.5 →  Suspicious jump
+|z| > 2.5   →  Critical anomaly
+Think of it like medicine — if a child grows three times faster than the norm in a single month, that's an anomaly, even if the growth itself looks healthy on paper.
+Algorithm 2: Genealogy Validation (Dependency Graph)
+Checks the logical consistency of progress — whether a student could realistically know advanced techniques without ever demonstrating the prerequisite basics.
+New submission contains: circuit_breaker
+↓
+Dependency graph states:
+circuit_breaker → requires → decorators
+circuit_breaker → requires → context_managers
+↓
+System checks student history:
+decorators in week 1? → NO ✗
+decorators in week 2? → NO ✗
+decorators in week 3? → NO ✗
+decorators in current submission? → NO ✗
+↓
+VIOLATION → penalty +0.5 added to ensemble score
+Analogy: It's like a student submitting a thesis without having passed a single intermediate exam. Technically possible — but highly suspicious.
+Algorithm 3: Cohort Comparison (Group Benchmarking)
+Compares the student not only against their own past, but against the entire cohort in the same week.
+-- PostgreSQL calculates:
+SELECT
+PERCENT_RANK() OVER (
+PARTITION BY course_id, week_number
+ORDER BY score
+) AS percentile
+-- Result:
+Student scored 75 points in week 4
+Cohort average: 48
+Student is at the 97th percentile → outlier
+cohort_z = (75 - 48) / 8 = 3.375
+Percentile > 90% → cohort_signal = 3.375
+Final Formula — Ensemble Score
+All three algorithms are combined into a single risk score:
+Ensemble = 0.5 × trajectory_z
++ 0.3 × genealogy_penalty
++ 0.2 × cohort_signal
+Example:
+= 0.5 × 3.125
++ 0.3 × 0.5
++ 0.2 × 3.375
+= 1.5625 + 0.15 + 0.675
+= 2.39 → Significant deviation 🟡 (requires review)
+Visual Overview — Full Diagram
+WEEK 1 (baseline)            WEEK 4 (new submission)
+score = 30                   score = 75
+│                            │
+└──────────┬─────────────────┘
+│
+┌─────────▼──────────┐
+│   3 Algorithms     │
+│                    │
+│ 1. Z-Score         │ → how large is the jump?
+│ 2. Genealogy Graph │ → is the progress logical?
+│ 3. Cohort Rank     │ → how does it compare to peers?
+└─────────┬──────────┘
+│
+┌─────────▼──────────┐
+│   ENSEMBLE SCORE   │
+│       2.39         │
+└─────────┬──────────┘
+│
+≥ 1.5 → Added to instructor queue
+≥ 2.5 → Mandatory oral interview
+Подробнее об выявлений оценок:
+More information about identifying assessments:
+Движок одноразового сравнения
+Это статистический модуль. Не нужна история коммитов — только базовая запись с 1-й недели и текущая работа.
+Алгоритм шаг за шагом:
+Шаг 1 — Сжатые недели прогресса:
+compressed_weeks = (current_score - baseline_score) / expected_weekly_increment
+Пример:
+baseline = 30, current = 75, expected increment = 5 баллов/неделя
+compressed_weeks = (75 - 30) / 5 = 9 недель
+Если студент на 4-й неделе — это подозрительно,
+он "перепрыгнул" 9 недель за 4.
+Шаг 2 — Z-score дельты траектории:
+z = (current_score - expected_score) / std_deviation
+Пример:
+expected на неделе 4 = 30 + (4 × 5) = 50
+current = 75
+std по группе = 8
+z = (75 - 50) / 8 = 3.125  ← очень высокое значение
+Z-score интерпретируется стандартно:
+|z| < 1.5 → норма
+|z| 1.5–2.5 → подозрительно
+|z| > 2.5 → критическая аномалия
+Шаг 3 — Ансамблевая оценка риска:
+ensemble = 0.5 × trajectory_z + 0.3 × genealogy_penalty + 0.2 × cohort_signal
+Структура данных — направленный граф:
+circuit_breaker ──requires──→ decorators
+circuit_breaker ──requires──→ context_managers
+decorators ──requires──→ basic_functions
+metaclass ──requires──→ basic_class
+metaclass ──requires──→ inheritance
+Алгоритм проверки:
+1. AST-анализ текущей работы → список обнаруженных техник
+Например: [circuit_breaker, async_generators]
+2. Для каждой техники → получить список предусловий из БД
+3. Для каждого предусловия → проверить:
+a. Есть ли оно в истории прошлых работ студента?
+b. Есть ли оно в ЭТОЙ же работе?
+4. Если предусловие не найдено нигде → нарушение генеалогии
+5. Штраф: +0.5 к ensemble за каждое нарушение (макс. +2.0)
+Пример отчёта:
+⚠ Нарушение: использован circuit_breaker
+→ Требует: decorators — НЕ НАЙДЕНО в истории
+→ Требует: context_managers — найдено в неделе 2 ✓
+Штраф: +0.5
+Алгоритм обхода графа — DFS (поиск в глубину) или BFS (в ширину) по дереву зависимостей.
+IN ENGLISHH
+One-Shot Comparison Engine
+This is a statistical module. No commit history needed — only the Week 1 baseline record and the current submission.
+Algorithm Step by Step:
+Step 1 — Compressed Progression Weeks:
+compressed_weeks = (current_score - baseline_score) / expected_weekly_increment
+Example:
+baseline = 30, current = 75, expected increment = 5 points/week
+compressed_weeks = (75 - 30) / 5 = 9 weeks
+If the student is in week 4 — this is suspicious,
+they "jumped" 9 weeks in 4.
+Step 2 — Trajectory Delta Z-Score:
+z = (current_score - expected_score) / std_deviation
+Example:
+expected at week 4 = 30 + (4 × 5) = 50
+current = 75
+cohort std = 8
+z = (75 - 50) / 8 = 3.125  ← very high value
+Z-score is interpreted in the standard way:
+|z| < 1.5 → normal
+|z| 1.5–2.5 → suspicious
+|z| > 2.5 → critical anomaly
+Step 3 — Ensemble Risk Score:
+ensemble = 0.5 × trajectory_z + 0.3 × genealogy_penalty + 0.2 × cohort_signal
+Technique Genealogy Validation
+This is a dependency graph — one of the smartest parts of the system.
+Data Structure — Directed Graph:
+circuit_breaker ──requires──→ decorators
+circuit_breaker ──requires──→ context_managers
+decorators ──requires──→ basic_functions
+metaclass ──requires──→ basic_class
+metaclass ──requires──→ inheritance
+Validation Algorithm:
+1. AST analysis of current submission → list of detected techniques
+e.g.: [circuit_breaker, async_generators]
+2. For each technique → fetch list of prerequisites from DB
+3. For each prerequisite → check:
+a. Is it present in the student's past submission history?
+b. Is it present in THIS same submission?
+4. If prerequisite is found nowhere → genealogy violation
+5. Penalty: +0.5 to ensemble per violation (max +2.0)
+Example report output:
+⚠ Violation: circuit_breaker used
+→ Requires: decorators — NOT FOUND in history
+→ Requires: context_managers — found in week 2 ✓
+Penalty: +0.5
+The graph traversal algorithm is DFS (Depth-First Search) or BFS (Breadth-First Search) through the dependency tree.
+Обьяснение слов:
+Explaining main words:
+What is Ensemble Score?
+Ensemble is the final suspicion score of a student's submission. It is made up of three separate signals, each looking at the submission from a different angle.
+Ensemble Score = the final number that decides:
+whether to flag the student or not
+Three Components — In Plain Terms
+Component 1: Trajectory Z-Score
+Trajectory = the path of development over time Z-Score = statistical deviation from the norm
+In plain terms:
+"How much did the student grow in one week
+compared to how much they were supposed to grow?"
+How it is calculated:
+Let's say:
+Student's baseline score (week 1)  = 30
+Expected growth per week           = 5 points
+Current week                       = 4
+Student's current score            = 75
+Step 1 — Expected score:
+expected_score = 30 + (4 × 5) = 50
+Step 2 — Standard deviation across the cohort:
+std_deviation = 8
+(how much students typically differ from each other)
+Step 3 — Z-Score:
+z = (current_score - expected_score) / std_deviation
+z = (75 - 50) / 8
+z = 3.125
+What z = 3.125 means:
+z = 0       → student is exactly where expected
+z = 1       → slightly above norm, all good
+z = 2       → noticeably above norm, suspicious
+z = 3.125   → far above norm, very suspicious
+Component 2: Genealogy Penalty
+Genealogy = the history of where knowledge comes from Penalty = a score penalty (added punishment)
+In plain terms:
+"Is the student using advanced techniques
+without knowing the basics required for them?"
+How it is calculated:
+The system stores a dependency graph:
+circuit_breaker  →  requires  →  decorators
+circuit_breaker  →  requires  →  context_managers
+The student used circuit_breaker in their new submission.
+The system checks:
+Was decorator present in week 1 submission? → NO
+Was decorator present in week 2 submission? → NO
+Was decorator present in week 3 submission? → NO
+Is decorator present in current submission? → NO
+→ VIOLATION → penalty +0.5
+Maximum penalties:
+1 violation  → +0.5
+2 violations → +1.0
+3 violations → +1.5
+4+ violations → +2.0  (ceiling, cannot go higher)
+Component 3: Cohort Signal
+Cohort = the group (all students in this course) Signal = an indicator value
+In plain terms:
+"How much does this student stand out
+from their classmates in the same week?"
+How it is calculated:
+All cohort scores in week 4:
+[42, 45, 48, 50, 51, 53, 55, 75]
+↑
+our student
+Cohort average (cohort_avg) = 52
+Standard deviation (cohort_std) = 9
+Student's percentile = 97%
+(they scored higher than 97% of classmates)
+Since percentile > 90%:
+cohort_signal = (75 - 52) / 9 = 2.56
+If percentile is ≤ 90%:
+cohort_signal = 0
+(student does not stand out → signal is ignored)
+The Final Ensemble Formula
+Ensemble = (0.5 × Trajectory) + (0.3 × Genealogy) + (0.2 × Cohort)
+What the numbers 0.5, 0.3, 0.2 mean:
+0.5 = 50% weight → Trajectory is the most important signal
+0.3 = 30% weight → Genealogy is second most important
+0.2 = 20% weight → Cohort is least important
+(requires group of ≥5 students)
+Example calculation:
+Trajectory z-score   = 3.125
+Genealogy penalty    = 0.5   (one violation)
+Cohort signal        = 2.56
+Ensemble = (0.5 × 3.125) + (0.3 × 0.5) + (0.2 × 2.56)
+=  1.5625        +  0.15       +  0.512
+=  2.22
+What Happens After the Score is Calculated
+Ensemble = 2.22
+│
+┌──────────▼──────────────────────────────────────┐
+│                                                 │
+< 1.5        1.5 – 2.0       2.0 – 2.5        ≥ 2.5
+│              │               │                │
+Normal ✓    Monitor ⚠      Review 🟡         Critical 🔴
+No action   Added to        Added to          Student
+queue           queue             notified
+(low            (high             automatically
+priority)       priority)         → mandatory
+interview
+Our student with Ensemble = 2.22:
+→ Added to instructor action queue
+→ Priority: Significant
+→ Instructor sees:
+• Student name
+• Week 4
+• Ensemble score: 2.22
+• Top 3 reasons for the anomaly
+→ Gemini generates interview questions
+Glossary of All Variables

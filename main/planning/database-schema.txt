@@ -1,0 +1,322 @@
+SylLab — Database Schema
+Database Design Document | Prisma + PostgreSQL 15+
+1. Entity Relationship Diagram (ASCII)
+The following diagram shows all tables, their relationships, and cardinalities:
+┌─────────────┐       ┌──────────────────┐       ┌──────────────────┐
+│    User     │       │     Course       │       │  CourseEnrollment│
+│─────────────│       │──────────────────│       │──────────────────│
+│ id (PK)     │1─────N│ id (PK)          │       │ id (PK)          │
+│ email       │       │ instructorId(FK) │1─────N│ courseId (FK)    │
+│ passwordHash│       │ name             │       │ studentId (FK)   │
+│ role        │       │ weeklyTarget[]   │       │ enrolledAt       │
+│ createdAt   │       │ thresholdOverride│       └──────────────────┘
+└─────────────┘       │ createdAt        │              N│
+│1             └──────────────────┘              │1
+│                      │1                        │
+│N                     │N                        │
+┌─────────────────┐   ┌──────────────────┐   ┌──────────────────────┐
+│ ProctoredSession│   │   Assignment     │   │     Baseline         │
+│─────────────────│   │──────────────────│   │──────────────────────│
+│ id (PK)         │   │ id (PK)          │   │ id (PK)              │
+│ courseId (FK)   │   │ courseId (FK)    │   │ studentId (FK)       │
+│ proctorId (FK)  │   │ weekNumber       │   │ courseId (FK)        │
+│ sessionCode     │   │ expectedScore    │   │ sessionId (FK)       │
+│ networkIsolated │   │ dueDate          │   │ contentHash (UNIQUE) │
+│ status          │   └──────────────────┘   │ rawCode (TEXT)       │
+│ startTime       │              │1           │ metrics (JSONB)      │
+│ endTime         │              │N           │ sophisticationScore  │
+│ lockedAt        │   ┌──────────────────┐   │ isLocked (immutable) │
+└─────────────────┘   │   Submission     │   └──────────────────────┘
+│──────────────────│
+│ id (PK)          │
+│ assignmentId(FK) │
+│ studentId (FK)   │
+│ rawCode (TEXT)   │
+│ metrics (JSONB)  │
+│ sophistication   │
+│ submittedAt      │
+└──────────────────┘
+│1
+│1
+┌──────────────────────┐
+│   AnalysisResult     │
+│──────────────────────│
+│ id (PK)              │
+│ submissionId (FK,UQ) │
+│ trajectoryZScore     │
+│ genealogyPenalty     │
+│ cohortOutlierScore   │
+│ ensembleScore        │
+│ riskLevel (ENUM)     │
+│ compressedWeeks      │
+│ violations (JSONB)   │
+│ llmGuidance (TEXT)   │
+│ interviewOutcome     │
+│ analyzedAt           │
+└──────────────────────┘
+┌──────────────────────────┐    ┌──────────────────────────┐
+│   TechniquePrerequisite  │    │      AuditLog            │
+│──────────────────────────│    │──────────────────────────│
+│ id (PK)                  │    │ id (PK)                  │
+│ technique (UNIQUE)       │    │ userId (FK, nullable)    │
+│ prerequisites (String[]) │    │ action                   │
+│ severityWeight           │    │ resourceType             │
+│ description              │    │ resourceId               │
+└──────────────────────────┘    │ oldValue (JSONB)         │
+│ newValue (JSONB)         │
+│ ipAddress                │
+│ createdAt (append-only)  │
+└──────────────────────────┘
+2. Complete Prisma Schema
+File: prisma/schema.prisma
+generator client {
+provider = "prisma-client-js"
+}
+datasource db {
+provider = "postgresql"
+url      = env("DATABASE_URL")
+}
+// ==================== ENUMS ====================
+enum Role {
+STUDENT
+INSTRUCTOR
+PROCTOR
+ADMIN
+}
+enum SessionStatus {
+SCHEDULED
+ACTIVE
+LOCKED
+CANCELLED
+}
+enum RiskLevel {
+NORMAL      // score < 1.5
+MONITOR     // 1.5 <= score < 2.0
+FLAGGED     // 2.0 <= score < 2.5
+CRITICAL    // score >= 2.5
+}
+enum InterviewOutcome {
+PENDING
+CLEARED
+CONFIRMED_AI
+ESCALATED
+}
+// ==================== MODELS ====================
+model User {
+id             String   @id @default(uuid())
+email          String   @unique
+passwordHash   String
+firstName      String
+lastName       String
+role           Role     @default(STUDENT)
+isActive       Boolean  @default(true)
+createdAt      DateTime @default(now())
+updatedAt      DateTime @updatedAt
+// Relations
+instructedCourses Course[]            @relation("InstructorCourses")
+proctored         ProctoredSession[]  @relation("ProctorSessions")
+enrollments       CourseEnrollment[]
+baselines         Baseline[]
+submissions       Submission[]
+auditLogs         AuditLog[]
+@@index([email])
+@@index([role])
+}
+model Course {
+id               String   @id @default(uuid())
+name             String
+code             String   @unique  // e.g. CS301-2025
+instructorId     String
+weeklyTargets    Json     // {1: 20, 2: 25, 3: 30, ...} expected scores per week
+thresholdOverride Json?   // optional per-course threshold overrides
+isActive         Boolean  @default(true)
+createdAt        DateTime @default(now())
+updatedAt        DateTime @updatedAt
+instructor   User               @relation("InstructorCourses", fields: [instructorId], references: [id])
+enrollments  CourseEnrollment[]
+sessions     ProctoredSession[]
+assignments  Assignment[]
+baselines    Baseline[]
+@@index([instructorId])
+@@index([code])
+}
+model CourseEnrollment {
+id         String   @id @default(uuid())
+courseId   String
+studentId  String
+enrolledAt DateTime @default(now())
+course  Course @relation(fields: [courseId], references: [id])
+student User   @relation(fields: [studentId], references: [id])
+@@unique([courseId, studentId])
+@@index([courseId])
+@@index([studentId])
+}
+model ProctoredSession {
+id              String        @id @default(uuid())
+courseId        String
+proctorId       String
+sessionCode     String        @unique  // 6-char alphanumeric join code
+networkIsolated Boolean       @default(false)
+status          SessionStatus @default(SCHEDULED)
+startTime       DateTime
+endTime         DateTime
+lockedAt        DateTime?
+createdAt       DateTime      @default(now())
+course    Course     @relation(fields: [courseId], references: [id])
+proctor   User       @relation("ProctorSessions", fields: [proctorId], references: [id])
+baselines Baseline[]
+@@index([courseId])
+@@index([sessionCode])
+@@index([status])
+}
+model Baseline {
+id                   String   @id @default(uuid())
+studentId            String
+courseId             String
+sessionId            String
+contentHash          String   @unique  // SHA-256, tamper detection
+rawCode              String   @db.Text
+// JSONB: 15+ AST metrics stored as structured object
+metrics              Json
+sophisticationScore  Float
+isLocked             Boolean  @default(false)  // true after session lock
+submittedAt          DateTime @default(now())
+student  User             @relation(fields: [studentId], references: [id])
+course   Course           @relation(fields: [courseId], references: [id])
+session  ProctoredSession @relation(fields: [sessionId], references: [id])
+@@unique([studentId, courseId])  // ONE baseline per student per course
+@@index([studentId])
+@@index([courseId])
+@@index([contentHash])
+}
+model Assignment {
+id             String   @id @default(uuid())
+courseId       String
+title          String
+weekNumber     Int
+expectedScore  Float    // target sophistication for that week
+dueDate        DateTime
+createdAt      DateTime @default(now())
+course      Course       @relation(fields: [courseId], references: [id])
+submissions Submission[]
+@@index([courseId])
+@@index([weekNumber])
+}
+model Submission {
+id                  String   @id @default(uuid())
+assignmentId        String
+studentId           String
+rawCode             String   @db.Text
+contentHash         String
+metrics             Json     // 15+ AST metrics
+sophisticationScore Float
+submittedAt         DateTime @default(now())
+assignment     Assignment     @relation(fields: [assignmentId], references: [id])
+student        User           @relation(fields: [studentId], references: [id])
+analysisResult AnalysisResult?
+@@index([assignmentId])
+@@index([studentId])
+@@index([sophisticationScore])  // for cohort percentile queries
+@@index([submittedAt])
+}
+model AnalysisResult {
+id                 String           @id @default(uuid())
+submissionId       String           @unique
+trajectoryZScore   Float
+genealogyPenalty   Float
+cohortOutlierScore Float
+ensembleScore      Float
+riskLevel          RiskLevel
+compressedWeeks    Float            // (current - baseline) / weekly_increment
+violations         Json             // array of {technique, missingPrereqs, penalty}
+llmGuidance        String?          @db.Text
+interviewOutcome   InterviewOutcome @default(PENDING)
+interviewNotes     String?          @db.Text
+analyzedAt         DateTime         @default(now())
+reviewedAt         DateTime?
+submission Submission @relation(fields: [submissionId], references: [id])
+@@index([riskLevel])
+@@index([ensembleScore])
+@@index([interviewOutcome])
+}
+model TechniquePrerequisite {
+id              String   @id @default(uuid())
+technique       String   @unique  // e.g. 'circuit_breaker'
+prerequisites   String[] // e.g. ['decorator', 'context_manager']
+severityWeight  Float    @default(0.5)  // penalty per violation
+description     String
+createdAt       DateTime @default(now())
+updatedAt       DateTime @updatedAt
+@@index([technique])
+}
+model AuditLog {
+id           String   @id @default(uuid())
+userId       String?  // nullable for system events
+action       String   // e.g. 'BASELINE_LOCKED', 'SUBMISSION_FLAGGED'
+resourceType String   // e.g. 'Baseline', 'Submission', 'User'
+resourceId   String
+oldValue     Json?
+newValue     Json?
+ipAddress    String?
+createdAt    DateTime @default(now())  // APPEND-ONLY: no updatedAt
+user User? @relation(fields: [userId], references: [id])
+@@index([userId])
+@@index([resourceType, resourceId])
+@@index([action])
+@@index([createdAt])
+}
+3. Migration Strategy
+3.1 Prisma Migrate Workflow
+Initial schema: npx prisma migrate dev --name init
+Adding a field: Update schema.prisma -> npx prisma migrate dev --name add_field_name
+Production deploy: npx prisma migrate deploy (applies pending migrations without reset)
+Never use prisma db push in production (bypasses migration history)
+All migrations stored in prisma/migrations/ and committed to version control
+3.2 Schema Change Without Data Loss
+Adding nullable columns: safe — Prisma adds column with NULL default
+Renaming columns: use two-step migration (add new col, copy data, drop old)
+Baseline.isLocked guard: application-level check before any update; DB trigger could be added as extra safety
+contentHash uniqueness enforced at DB level — prevents duplicate baselines even under race conditions
+4. The Nasty Query — Cohort Percentile Analysis
+The slowest query: calculating each student's percentile rank for a given course and week, needed by the Cohort Outlier Engine. This query joins submissions with assignments, filters by course and week, and uses window functions.
+4.1 The Query (Raw SQL)
+-- Cohort percentile + stddev for a specific course and week
+SELECT
+s."studentId",
+s."sophisticationScore",
+PERCENT_RANK() OVER (
+PARTITION BY a."courseId", a."weekNumber"
+ORDER BY s."sophisticationScore"
+) AS percentile_rank,
+AVG(s."sophisticationScore") OVER (
+PARTITION BY a."courseId", a."weekNumber"
+) AS cohort_avg,
+STDDEV(s."sophisticationScore") OVER (
+PARTITION BY a."courseId", a."weekNumber"
+) AS cohort_stddev,
+COUNT(*) OVER (
+PARTITION BY a."courseId", a."weekNumber"
+) AS cohort_size
+FROM "Submission" s
+JOIN "Assignment" a ON s."assignmentId" = a.id
+WHERE a."courseId" = $1
+AND a."weekNumber" = $2
+ORDER BY s."sophisticationScore" DESC;
+4.2 Indexing Strategy
+Index on Submission.sophisticationScore: supports ORDER BY in PERCENT_RANK window
+Index on Assignment.courseId: filters partition correctly
+Index on Assignment.weekNumber: secondary filter for week partition
+Composite index @@index([courseId, weekNumber]) on Assignment: covers both filters in single scan
+Composite index @@index([assignmentId, studentId]) on Submission: covers JOIN condition
+4.3 EXPLAIN ANALYZE Prediction
+-- Predicted execution plan (PostgreSQL 15):
+-- WindowAgg  (cost=1200..1350 rows=200 width=72)
+--   -> Sort  (cost=1200..1205 rows=200)
+--         Sort Key: s.sophisticationScore
+--     -> Hash Join  (cost=50..1190 rows=200)
+--           Hash Cond: (s.assignmentId = a.id)
+--           -> Index Scan on Submission_assignmentId_idx (cost=0..800)
+--           -> Hash  (cost=48..48 rows=10 via Assignment_courseId_weekNumber_idx)
+-- With Redis caching (TTL 1 hour): 0ms for 95% of requests
+-- Without cache: ~15-30ms for cohort of 200 students (acceptable)
+— End of Database Schema Document —

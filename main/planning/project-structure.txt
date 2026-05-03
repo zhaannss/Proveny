@@ -1,0 +1,137 @@
+SylLab — Anti-Plagiarism Code Forensics Platform
+Project File Structure (Express + TypeScript + Prisma + PostgreSQL + Redis)
+==========================================================================
+
+syllab-backend/
+│
+├── src/                                    # All application source code
+│   │
+│   ├── app.ts                              # Express app factory — registers all middleware and routers
+│   ├── server.ts                           # Entry point — binds HTTP server, starts app, handles graceful shutdown
+│   │
+│   ├── config/                             # Configuration & environment management
+│   │   ├── env.ts                          # Zod schema for env validation — app REFUSES to start if invalid
+│   │   ├── prisma.ts                       # Prisma client singleton — single shared instance across app
+│   │   └── redis.ts                        # ioredis client singleton — used by rate limiter & cache modules
+│   │
+│   ├── middleware/                         # Express middleware (applied globally or per-router)
+│   │   ├── auth.ts                         # JWT verification — populates req.user from Bearer token
+│   │   ├── rbac.ts                         # Role-based access control factory — requireRole(...roles)
+│   │   ├── rateLimiter.ts                  # Redis token bucket rate limiter — configurable per endpoint
+│   │   ├── errorHandler.ts                 # Global error handler — maps errors to HTTP status codes
+│   │   ├── requestLogger.ts               # Audit log middleware — writes append-only AuditLog entries
+│   │   └── fileUpload.ts                   # Multer config — enforces 5MB limit, JS/TS MIME type only
+│   │
+│   ├── modules/                            # Feature modules (router + service + schema per module)
+│   │   │
+│   │   ├── auth/                           # Authentication module
+│   │   │   ├── auth.router.ts              # POST /auth/login, POST /auth/refresh, POST /auth/logout
+│   │   │   ├── auth.service.ts             # JWT sign/verify, bcrypt password comparison, refresh token management
+│   │   │   └── auth.schema.ts              # Zod schemas for login and refresh request payloads
+│   │   │
+│   │   ├── users/                          # User management module (Admin only)
+│   │   │   ├── users.router.ts             # GET /users, POST /users, GET/PATCH /users/:id
+│   │   │   ├── users.service.ts            # CRUD operations via Prisma, password hashing
+│   │   │   └── users.schema.ts             # Zod schemas for create/update user payloads
+│   │   │
+│   │   ├── courses/                        # Course management module
+│   │   │   ├── courses.router.ts           # GET /courses, POST /courses, POST /courses/:id/enroll
+│   │   │   ├── courses.service.ts          # Course CRUD, enrollment management
+│   │   │   └── courses.schema.ts           # Zod schemas for course payloads
+│   │   │
+│   │   ├── sessions/                       # Proctored baseline session module
+│   │   │   ├── sessions.router.ts          # GET/POST /sessions, POST /sessions/:id/activate|lock
+│   │   │   ├── sessions.service.ts         # Session lifecycle management, sessionCode generation
+│   │   │   └── sessions.schema.ts          # Zod schemas for session payloads
+│   │   │
+│   │   ├── baselines/                      # Immutable baseline submission module
+│   │   │   ├── baselines.router.ts         # POST /baselines, GET /baselines/:studentId/:courseId
+│   │   │   ├── baselines.service.ts        # File handling, hash computation, AST analysis trigger, lock enforcement
+│   │   │   └── baselines.schema.ts         # Zod schemas for baseline submission
+│   │   │
+│   │   ├── assignments/                    # Assignment management module
+│   │   │   ├── assignments.router.ts       # GET /assignments, POST /assignments
+│   │   │   ├── assignments.service.ts      # Assignment CRUD with course validation
+│   │   │   └── assignments.schema.ts       # Zod schemas for assignment payloads
+│   │   │
+│   │   ├── submissions/                    # Code submission module
+│   │   │   ├── submissions.router.ts       # GET /submissions, POST /submissions (file upload)
+│   │   │   ├── submissions.service.ts      # File processing, analysis orchestration, ownership checks
+│   │   │   └── submissions.schema.ts       # Zod schemas for submission query params
+│   │   │
+│   │   ├── analysis/                       # Forensic analysis results module
+│   │   │   ├── analysis.router.ts          # GET /analysis/:submissionId, PATCH /analysis/:id/outcome
+│   │   │   └── analysis.service.ts         # Orchestrates all 3 scoring engines, stores AnalysisResult
+│   │   │
+│   │   ├── actionQueue/                    # Instructor action queue module
+│   │   │   ├── queue.router.ts             # GET /queue (paginated, filterable by riskLevel/outcome)
+│   │   │   └── queue.service.ts            # Queries AnalysisResult with joins, sorts by ensembleScore desc
+│   │   │
+│   │   └── reports/                        # Reporting & export module
+│   │       ├── reports.router.ts           # GET /reports/cohort, GET /reports/export
+│   │       └── reports.service.ts          # Cohort stats queries, CSV/JSON export generation
+│   │
+│   ├── engines/                            # Core forensic analysis engines (pure functions, no Express)
+│   │   │
+│   │   ├── ast/                            # AST parsing & sophistication scoring
+│   │   │   ├── parser.ts                   # @babel/parser wrapper — returns AST from JS/TS source string
+│   │   │   ├── sophisticationScorer.ts     # Orchestrates all 15+ metric extractors, returns 0-100 score
+│   │   │   ├── genealogyValidator.ts       # Detects technique prerequisite violations, computes penalty
+│   │   │   └── metrics/                    # Individual metric extractors (pure functions, easily testable)
+│   │   │       ├── errorHandling.ts        # Detects try/catch tiers → tier score 0-5
+│   │   │       ├── architecture.ts         # Detects flat/class/service/repository patterns → tier 0-5
+│   │   │       ├── typeSafety.ts           # Detects TypeScript annotations, Zod/Prisma usage → score 0-3
+│   │   │       ├── advancedTechniques.ts   # Detects decorators, async/await, circuit breakers, DI → boolean flags
+│   │   │       └── naming.ts               # Analyzes identifier length/verbosity → score 0-2
+│   │   │
+│   │   ├── ensemble/                       # Ensemble scoring engine
+│   │   │   ├── trajectoryDelta.ts          # Computes z-score: (current - expected) / stddev
+│   │   │   ├── cohortOutlier.ts            # Fetches/caches cohort stats, computes percentile signal
+│   │   │   └── ensembleScorer.ts           # Weighted sum: 0.5*trajectory + 0.3*genealogy + 0.2*cohort
+│   │   │
+│   │   ├── git/                            # Git history forensics (extra credit)
+│   │   │   └── gitForensics.ts             # Parses git log output, computes temporal entropy (Shannon formula)
+│   │   │
+│   │   └── llm/                            # LLM integration module
+│   │       └── geminiClient.ts             # Gemini 3.1 Flash Lite API wrapper, rate limit check, response cache
+│   │
+│   ├── jobs/                               # Async job processing (extra credit — BullMQ)
+│   │   ├── jobQueue.ts                     # BullMQ queue definition (queue name: submission-analysis)
+│   │   └── submissionProcessor.ts          # BullMQ worker — processes analysis jobs asynchronously
+│   │
+│   └── utils/                              # Shared utility functions
+│       ├── hash.ts                         # SHA-256 content hashing (crypto module wrapper)
+│       ├── pagination.ts                   # Offset pagination helpers — calculates skip/take from page/limit
+│       └── logger.ts                       # Winston logger config — JSON format in prod, pretty in dev
+│
+├── prisma/                                 # Prisma ORM configuration
+│   ├── schema.prisma                       # Complete data model — all models, enums, relations, indexes
+│   └── migrations/                         # Auto-generated by `prisma migrate dev` — committed to git
+│       └── 20250901000000_init/            # Example: initial migration
+│           └── migration.sql
+│
+├── tests/                                  # Test suite
+│   ├── unit/                               # Unit tests (Jest) — pure functions, no DB/network
+│   │   ├── scoring/                        # Tests for sophisticationScorer, ensembleScorer math
+│   │   └── engines/                        # Tests for AST parser, genealogy validator
+│   └── integration/                        # Integration tests (Supertest) — hit real endpoints
+│       └── api/                            # Tests for auth, submissions, analysis endpoints
+│
+├── .env                                    # Local environment variables — NEVER commit (in .gitignore)
+├── .env.example                            # Template with all variable names, no real secrets
+├── .env.test                               # Test environment — points to test DB, mock Gemini key
+├── .gitignore                              # Excludes: .env, node_modules, dist, prisma/dev.db
+├── package.json                            # Dependencies, scripts: dev, build, test, migrate, seed
+├── tsconfig.json                           # TypeScript config: strict mode, ESM output
+├── jest.config.ts                          # Jest config: ts-jest, coverage thresholds
+└── docker-compose.yml                      # Local dev: PostgreSQL 15 + Redis 7 containers
+
+==========================================================================
+KEY ARCHITECTURAL NOTES:
+- modules/ follow the pattern: router (HTTP) → service (business logic) → Prisma (DB)
+- engines/ are pure TypeScript functions with no Express/Prisma dependencies — easily unit tested
+- All secrets validated at startup via Zod in config/env.ts — no runtime surprises
+- AuditLog entries written by requestLogger.ts middleware — no manual logging in services
+- Redis used for: rate limiting, cohort cache (TTL 1hr), LLM response cache (TTL 24hr)
+- Prisma client instantiated once in config/prisma.ts and imported everywhere (singleton)
+==========================================================================

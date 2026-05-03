@@ -1,0 +1,1622 @@
+openapi: "3.0.3"
+info:
+  title: SylLab API
+  description: |
+    Anti-Plagiarism Code Forensics Platform API.
+    Establishes proctored authentic baselines and detects AI-assisted code generation
+    through sophistication delta analysis, technique genealogy validation, and cohort comparison.
+  version: "1.0.0"
+  contact:
+    name: SylLab Support
+    email: support@syllab.io
+
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Local development
+  - url: https://api.syllab.io/v1
+    description: Production
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: Auth
+    description: Authentication and token management
+  - name: Users
+    description: User management (Admin only)
+  - name: Courses
+    description: Course and cohort management
+  - name: Sessions
+    description: Proctored baseline session management
+  - name: Baselines
+    description: Week 1 immutable baseline records
+  - name: Assignments
+    description: Assignment management
+  - name: Submissions
+    description: Code submission and analysis
+  - name: Analysis
+    description: Forensic analysis results
+  - name: Queue
+    description: Instructor action queue
+  - name: Reports
+    description: Export and reporting
+
+paths:
+
+  # ============================================================
+  # AUTH
+  # ============================================================
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login and receive JWT tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+            example:
+              email: "instructor@university.edu"
+              password: "SecurePass123!"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthTokens"
+              example:
+                accessToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                expiresIn: 900
+                user:
+                  id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  email: "instructor@university.edu"
+                  role: "INSTRUCTOR"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token using refresh token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+            example:
+              refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+      responses:
+        "200":
+          description: New access token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthTokens"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Invalidate refresh token
+      responses:
+        "204":
+          description: Logged out successfully
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  # ============================================================
+  # USERS
+  # ============================================================
+  /users:
+    get:
+      tags: [Users]
+      summary: List all users (Admin only)
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/SortParam"
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [STUDENT, INSTRUCTOR, PROCTOR, ADMIN]
+        - name: isActive
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Paginated list of users
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedUsers"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+    post:
+      tags: [Users]
+      summary: Create a new user (Admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+            example:
+              email: "student@university.edu"
+              password: "TempPass456!"
+              firstName: "Amir"
+              lastName: "Seitkali"
+              role: "STUDENT"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /users/{userId}:
+    get:
+      tags: [Users]
+      summary: Get user by ID
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      responses:
+        "200":
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+    patch:
+      tags: [Users]
+      summary: Update user (Admin only)
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  # ============================================================
+  # COURSES
+  # ============================================================
+  /courses:
+    get:
+      tags: [Courses]
+      summary: List courses accessible to the current user
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/SortParam"
+        - name: isActive
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Paginated list of courses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedCourses"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+    post:
+      tags: [Courses]
+      summary: Create a new course (Instructor only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCourseRequest"
+            example:
+              name: "Backend Development 2025"
+              code: "CS301-2025"
+              weeklyTargets:
+                "1": 20
+                "2": 25
+                "3": 30
+                "4": 35
+                "5": 40
+      responses:
+        "201":
+          description: Course created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CourseResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /courses/{courseId}/enroll:
+    post:
+      tags: [Courses]
+      summary: Enroll a student in a course (Instructor/Admin)
+      parameters:
+        - $ref: "#/components/parameters/CourseId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [studentId]
+              properties:
+                studentId:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: Enrollment created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnrollmentResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  # ============================================================
+  # SESSIONS (Proctored)
+  # ============================================================
+  /sessions:
+    get:
+      tags: [Sessions]
+      summary: List proctored sessions
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/SortParam"
+        - name: courseId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [SCHEDULED, ACTIVE, LOCKED, CANCELLED]
+      responses:
+        "200":
+          description: Paginated list of sessions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedSessions"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+    post:
+      tags: [Sessions]
+      summary: Create a proctored baseline session (Instructor/Proctor)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionRequest"
+            example:
+              courseId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+              startTime: "2025-09-08T09:00:00Z"
+              endTime: "2025-09-08T09:30:00Z"
+              networkIsolated: true
+      responses:
+        "201":
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /sessions/{sessionId}/activate:
+    post:
+      tags: [Sessions]
+      summary: Activate session - students can now join (Proctor only)
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session activated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /sessions/{sessionId}/lock:
+    post:
+      tags: [Sessions]
+      summary: Lock session - no further baseline submissions accepted (Proctor only)
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session locked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  # ============================================================
+  # BASELINES
+  # ============================================================
+  /baselines:
+    post:
+      tags: [Baselines]
+      summary: Submit Week 1 baseline code (Student only, during active session)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [sessionCode, file]
+              properties:
+                sessionCode:
+                  type: string
+                  example: "ABC123"
+                file:
+                  type: string
+                  format: binary
+                  description: JavaScript or TypeScript source file (max 5MB)
+      responses:
+        "201":
+          description: Baseline submitted and analyzed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BaselineResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /baselines/{studentId}/{courseId}:
+    get:
+      tags: [Baselines]
+      summary: Get baseline for a student in a course (Instructor/Admin or own baseline)
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/CourseId"
+      responses:
+        "200":
+          description: Baseline details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BaselineResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  # ============================================================
+  # ASSIGNMENTS
+  # ============================================================
+  /assignments:
+    get:
+      tags: [Assignments]
+      summary: List assignments for a course
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/SortParam"
+        - name: courseId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: weekNumber
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 16
+      responses:
+        "200":
+          description: Paginated assignments
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedAssignments"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+    post:
+      tags: [Assignments]
+      summary: Create a new assignment (Instructor only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAssignmentRequest"
+            example:
+              courseId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+              title: "Lab 4 - Error Handling & Service Layer"
+              weekNumber: 4
+              expectedScore: 45.0
+              dueDate: "2025-10-05T23:59:00Z"
+      responses:
+        "201":
+          description: Assignment created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssignmentResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  # ============================================================
+  # SUBMISSIONS
+  # ============================================================
+  /submissions:
+    get:
+      tags: [Submissions]
+      summary: List submissions for an assignment (Instructor) or own submissions (Student)
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/SortParam"
+        - name: assignmentId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: studentId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: riskLevel
+          in: query
+          schema:
+            type: string
+            enum: [NORMAL, MONITOR, FLAGGED, CRITICAL]
+      responses:
+        "200":
+          description: Paginated submissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedSubmissions"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+    post:
+      tags: [Submissions]
+      summary: Submit code for an assignment (Student only)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [assignmentId, file]
+              properties:
+                assignmentId:
+                  type: string
+                  format: uuid
+                file:
+                  type: string
+                  format: binary
+                  description: JavaScript or TypeScript source file (max 5MB)
+      responses:
+        "201":
+          description: Submission accepted and analysis triggered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmissionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  # ============================================================
+  # ANALYSIS
+  # ============================================================
+  /analysis/{submissionId}:
+    get:
+      tags: [Analysis]
+      summary: Get full forensic analysis report for a submission
+      parameters:
+        - name: submissionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Full forensic analysis report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisResultResponse"
+              example:
+                id: "f1a2b3c4-d5e6-7890-abcd-ef1234567891"
+                submissionId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                trajectoryZScore: 3.2
+                genealogyPenalty: 1.0
+                cohortOutlierScore: 0.85
+                ensembleScore: 2.45
+                riskLevel: "FLAGGED"
+                compressedWeeks: 8.3
+                violations:
+                  - technique: "circuit_breaker"
+                    missingPrerequisites: ["decorator", "context_manager"]
+                    penalty: 0.5
+                  - technique: "dependency_injection"
+                    missingPrerequisites: ["class_based_architecture"]
+                    penalty: 0.5
+                llmGuidance: "Ask the student to explain how the circuit breaker resets after a timeout..."
+                interviewOutcome: "PENDING"
+                analyzedAt: "2025-10-06T10:23:45Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /analysis/{submissionId}/outcome:
+    patch:
+      tags: [Analysis]
+      summary: Record oral interview outcome (Instructor only)
+      parameters:
+        - name: submissionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [outcome]
+              properties:
+                outcome:
+                  type: string
+                  enum: [CLEARED, CONFIRMED_AI, ESCALATED]
+                notes:
+                  type: string
+                  maxLength: 2000
+            example:
+              outcome: "CONFIRMED_AI"
+              notes: "Student could not explain the circuit breaker logic or the decorator pattern used."
+      responses:
+        "200":
+          description: Outcome recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisResultResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  # ============================================================
+  # ACTION QUEUE
+  # ============================================================
+  /queue:
+    get:
+      tags: [Queue]
+      summary: Get instructor action queue (Instructor only)
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/SortParam"
+        - name: courseId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: riskLevel
+          in: query
+          schema:
+            type: string
+            enum: [MONITOR, FLAGGED, CRITICAL]
+        - name: interviewOutcome
+          in: query
+          schema:
+            type: string
+            enum: [PENDING, CLEARED, CONFIRMED_AI, ESCALATED]
+      responses:
+        "200":
+          description: Paginated action queue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedQueue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  # ============================================================
+  # REPORTS
+  # ============================================================
+  /reports/cohort:
+    get:
+      tags: [Reports]
+      summary: Get cohort sophistication statistics for a week (Instructor only)
+      parameters:
+        - name: courseId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: weekNumber
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Cohort statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CohortStatsResponse"
+              example:
+                courseId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                weekNumber: 4
+                cohortSize: 32
+                avg: 38.5
+                stddev: 7.2
+                p10: 28.0
+                p50: 38.0
+                p90: 51.0
+                outlierThreshold: 51.0
+                distribution:
+                  - bucket: "0-20"
+                    count: 2
+                  - bucket: "21-40"
+                    count: 18
+                  - bucket: "41-60"
+                    count: 10
+                  - bucket: "61-80"
+                    count: 2
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /reports/export:
+    get:
+      tags: [Reports]
+      summary: Export course report as CSV (Instructor only)
+      parameters:
+        - name: courseId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [csv, json]
+            default: csv
+      responses:
+        "200":
+          description: Export file
+          content:
+            text/csv:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+# ============================================================
+# COMPONENTS
+# ============================================================
+components:
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "JWT access token. Obtain via POST /auth/login. Include as: Authorization: Bearer <token>"
+
+  parameters:
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    CourseId:
+      name: courseId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      description: Page number for offset pagination
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      description: Items per page
+    SortParam:
+      name: sort
+      in: query
+      schema:
+        type: string
+        example: "-createdAt"
+      description: "Sort field. Prefix with - for descending. Example: -createdAt, sophisticationScore"
+
+  responses:
+    BadRequest:
+      description: Bad request — invalid parameters or missing required fields
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            statusCode: 400
+            error: "Bad Request"
+            message: "sessionCode must be a 6-character alphanumeric string"
+    Unauthorized:
+      description: Unauthorized — missing or invalid JWT token
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            statusCode: 401
+            error: "Unauthorized"
+            message: "Invalid or expired access token"
+    Forbidden:
+      description: Forbidden — insufficient role permissions
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            statusCode: 403
+            error: "Forbidden"
+            message: "Only INSTRUCTOR role can perform this action"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            statusCode: 404
+            error: "Not Found"
+            message: "Submission with id 'abc-123' not found"
+    Conflict:
+      description: Conflict — resource already exists or state conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            statusCode: 409
+            error: "Conflict"
+            message: "Student already has a baseline for this course"
+    UnprocessableEntity:
+      description: Unprocessable Entity — validation errors
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ValidationErrorResponse"
+          example:
+            statusCode: 422
+            error: "Unprocessable Entity"
+            message: "Validation failed"
+            details:
+              - field: "weekNumber"
+                message: "weekNumber must be between 1 and 16"
+              - field: "expectedScore"
+                message: "expectedScore must be a number between 0 and 100"
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            statusCode: 500
+            error: "Internal Server Error"
+            message: "An unexpected error occurred. Please try again later."
+
+  schemas:
+
+    ErrorResponse:
+      type: object
+      required: [statusCode, error, message]
+      properties:
+        statusCode:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+
+    ValidationErrorResponse:
+      allOf:
+        - $ref: "#/components/schemas/ErrorResponse"
+        - type: object
+          properties:
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+
+    PaginationMeta:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          example: 87
+        totalPages:
+          type: integer
+          example: 5
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+
+    AuthTokens:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiresIn:
+          type: integer
+          description: Access token TTL in seconds
+        user:
+          $ref: "#/components/schemas/UserResponse"
+
+    UserResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        firstName:
+          type: string
+        lastName:
+          type: string
+        role:
+          type: string
+          enum: [STUDENT, INSTRUCTOR, PROCTOR, ADMIN]
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateUserRequest:
+      type: object
+      required: [email, password, firstName, lastName, role]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        firstName:
+          type: string
+          maxLength: 100
+        lastName:
+          type: string
+          maxLength: 100
+        role:
+          type: string
+          enum: [STUDENT, INSTRUCTOR, PROCTOR, ADMIN]
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        isActive:
+          type: boolean
+        role:
+          type: string
+          enum: [STUDENT, INSTRUCTOR, PROCTOR, ADMIN]
+
+    PaginatedUsers:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserResponse"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    CourseResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        code:
+          type: string
+        instructorId:
+          type: string
+          format: uuid
+        weeklyTargets:
+          type: object
+          additionalProperties:
+            type: number
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateCourseRequest:
+      type: object
+      required: [name, code, weeklyTargets]
+      properties:
+        name:
+          type: string
+          maxLength: 200
+        code:
+          type: string
+          pattern: "^[A-Z]{2,6}[0-9]{3}-[0-9]{4}$"
+        weeklyTargets:
+          type: object
+          additionalProperties:
+            type: number
+            minimum: 0
+            maximum: 100
+
+    PaginatedCourses:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/CourseResponse"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    EnrollmentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        courseId:
+          type: string
+          format: uuid
+        studentId:
+          type: string
+          format: uuid
+        enrolledAt:
+          type: string
+          format: date-time
+
+    SessionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        courseId:
+          type: string
+          format: uuid
+        proctorId:
+          type: string
+          format: uuid
+        sessionCode:
+          type: string
+          example: "ABC123"
+        networkIsolated:
+          type: boolean
+        status:
+          type: string
+          enum: [SCHEDULED, ACTIVE, LOCKED, CANCELLED]
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        lockedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateSessionRequest:
+      type: object
+      required: [courseId, startTime, endTime]
+      properties:
+        courseId:
+          type: string
+          format: uuid
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        networkIsolated:
+          type: boolean
+          default: false
+
+    PaginatedSessions:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionResponse"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    AstMetrics:
+      type: object
+      description: 15+ AST-derived sophistication metrics
+      properties:
+        errorHandlingTier:
+          type: integer
+          minimum: 0
+          maximum: 5
+          description: "0=none, 1=basic try-catch, 3=specific exceptions, 5=custom hierarchies"
+        architectureTier:
+          type: integer
+          minimum: 0
+          maximum: 5
+          description: "0=flat functions, 2=simple classes, 4=service layer, 5=repository/CQRS"
+        typeSafetyTier:
+          type: integer
+          minimum: 0
+          maximum: 3
+          description: "0=none, 1=partial hints, 3=comprehensive TypeScript"
+        hasDecorators:
+          type: boolean
+        hasAsyncAwait:
+          type: boolean
+        hasContextManagers:
+          type: boolean
+        hasMetaclasses:
+          type: boolean
+        hasCircuitBreaker:
+          type: boolean
+        hasDependencyInjection:
+          type: boolean
+        namingVerbosityScore:
+          type: number
+          minimum: 0
+          maximum: 2
+        functionCount:
+          type: integer
+        classCount:
+          type: integer
+        averageFunctionLength:
+          type: number
+        nestingDepth:
+          type: integer
+        commentRatio:
+          type: number
+
+    BaselineResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        studentId:
+          type: string
+          format: uuid
+        courseId:
+          type: string
+          format: uuid
+        sessionId:
+          type: string
+          format: uuid
+        contentHash:
+          type: string
+          description: SHA-256 hash of submitted code
+        sophisticationScore:
+          type: number
+          minimum: 0
+          maximum: 100
+        metrics:
+          $ref: "#/components/schemas/AstMetrics"
+        isLocked:
+          type: boolean
+        submittedAt:
+          type: string
+          format: date-time
+
+    AssignmentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        courseId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        weekNumber:
+          type: integer
+        expectedScore:
+          type: number
+        dueDate:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateAssignmentRequest:
+      type: object
+      required: [courseId, title, weekNumber, expectedScore, dueDate]
+      properties:
+        courseId:
+          type: string
+          format: uuid
+        title:
+          type: string
+          maxLength: 300
+        weekNumber:
+          type: integer
+          minimum: 1
+          maximum: 16
+        expectedScore:
+          type: number
+          minimum: 0
+          maximum: 100
+        dueDate:
+          type: string
+          format: date-time
+
+    PaginatedAssignments:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssignmentResponse"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    SubmissionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        assignmentId:
+          type: string
+          format: uuid
+        studentId:
+          type: string
+          format: uuid
+        contentHash:
+          type: string
+        sophisticationScore:
+          type: number
+        metrics:
+          $ref: "#/components/schemas/AstMetrics"
+        submittedAt:
+          type: string
+          format: date-time
+        analysisStatus:
+          type: string
+          enum: [PENDING, COMPLETE, FAILED]
+
+    PaginatedSubmissions:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubmissionResponse"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    AnalysisResultResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        submissionId:
+          type: string
+          format: uuid
+        trajectoryZScore:
+          type: number
+          description: "Z-score of sophistication delta from expected progression"
+        genealogyPenalty:
+          type: number
+          description: "Cumulative penalty from prerequisite violations (0.5 per violation, max 2.0)"
+        cohortOutlierScore:
+          type: number
+          description: "Normalized cohort outlier signal (0-1)"
+        ensembleScore:
+          type: number
+          description: "Weighted sum: 0.5*trajectory + 0.3*genealogy + 0.2*cohort"
+        riskLevel:
+          type: string
+          enum: [NORMAL, MONITOR, FLAGGED, CRITICAL]
+        compressedWeeks:
+          type: number
+          description: "Equivalent weeks of learning compressed into this submission"
+        violations:
+          type: array
+          items:
+            type: object
+            properties:
+              technique:
+                type: string
+              missingPrerequisites:
+                type: array
+                items:
+                  type: string
+              penalty:
+                type: number
+        llmGuidance:
+          type: string
+          nullable: true
+          description: "Gemini-generated interview questions for instructor"
+        interviewOutcome:
+          type: string
+          enum: [PENDING, CLEARED, CONFIRMED_AI, ESCALATED]
+        interviewNotes:
+          type: string
+          nullable: true
+        analyzedAt:
+          type: string
+          format: date-time
+        reviewedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    PaginatedQueue:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              submissionId:
+                type: string
+                format: uuid
+              studentName:
+                type: string
+              weekNumber:
+                type: integer
+              ensembleScore:
+                type: number
+              riskLevel:
+                type: string
+                enum: [MONITOR, FLAGGED, CRITICAL]
+              topAnomalies:
+                type: array
+                maxItems: 3
+                items:
+                  type: string
+              interviewOutcome:
+                type: string
+                enum: [PENDING, CLEARED, CONFIRMED_AI, ESCALATED]
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    CohortStatsResponse:
+      type: object
+      properties:
+        courseId:
+          type: string
+          format: uuid
+        weekNumber:
+          type: integer
+        cohortSize:
+          type: integer
+        avg:
+          type: number
+        stddev:
+          type: number
+        p10:
+          type: number
+        p50:
+          type: number
+        p90:
+          type: number
+        outlierThreshold:
+          type: number
+        distribution:
+          type: array
+          items:
+            type: object
+            properties:
+              bucket:
+                type: string
+              count:
+                type: integer

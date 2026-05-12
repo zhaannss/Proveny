@@ -1,13 +1,18 @@
 const express = require("express");
+const { z } = require("zod");
 const { authRequired } = require("../../middleware/auth");
-const { requireRole } = require("../../middleware/rbac");
 const { makeCodeUpload } = require("../../middleware/fileUpload");
+const { badRequest } = require("../../utils/httpErrors");
 const submissionsService = require("./submissions.service");
 
-function parseIntParam(v, def) {
-  const n = Number(v);
-  return Number.isFinite(n) && n > 0 ? n : def;
-}
+const listQuerySchema = z.object({
+  assignmentId: z.string().uuid().optional(),
+  studentId: z.string().uuid().optional(),
+  riskLevel: z.enum(["NORMAL", "MONITOR", "FLAGGED", "CRITICAL"]).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  sort: z.string().optional(),
+});
 
 function makeSubmissionsRouter({ maxFileSizeMb = 5 } = {}) {
   const router = express.Router();
@@ -17,15 +22,10 @@ function makeSubmissionsRouter({ maxFileSizeMb = 5 } = {}) {
 
   router.get("/", async (req, res, next) => {
     try {
-      const page = parseIntParam(req.query.page, 1);
-      const limit = Math.min(100, parseIntParam(req.query.limit, 20));
-
+      const query = listQuerySchema.parse(req.query);
       const result = await submissionsService.listSubmissions({
         actor: req.user,
-        assignmentId: req.query.assignmentId,
-        studentId: req.query.studentId,
-        page,
-        limit,
+        ...query,
       });
       return res.status(200).json(result);
     } catch (e) {
@@ -33,11 +33,16 @@ function makeSubmissionsRouter({ maxFileSizeMb = 5 } = {}) {
     }
   });
 
-  router.post("/", requireRole("STUDENT"), upload.single("file"), async (req, res, next) => {
+  router.post("/", upload.single("file"), async (req, res, next) => {
     try {
       const assignmentId = req.body?.assignmentId;
-      const source = req.file?.buffer?.toString("utf-8");
-      const submission = await submissionsService.submitAssignment({ actor: req.user, assignmentId, source });
+      if (!assignmentId) throw badRequest("assignmentId is required");
+      if (!req.file?.buffer) throw badRequest("file is required");
+      const submission = await submissionsService.submitAssignment({
+        actor: req.user,
+        assignmentId,
+        source: req.file.buffer.toString("utf-8"),
+      });
       return res.status(201).json(submission);
     } catch (e) {
       return next(e);

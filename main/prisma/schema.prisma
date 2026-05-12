@@ -45,6 +45,16 @@ model User {
   lastName     String
   role         Role     @default(STUDENT)
   isActive     Boolean  @default(true)
+
+  // Email verification
+  isEmailVerified          Boolean   @default(false)
+  emailVerificationToken   String?   @unique
+  emailVerificationExpires DateTime?
+
+  // Password reset
+  passwordResetToken   String?   @unique
+  passwordResetExpires DateTime?
+
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -58,6 +68,8 @@ model User {
 
   @@index([email])
   @@index([role])
+  @@index([emailVerificationToken])
+  @@index([passwordResetToken])
 }
 
 model Course {

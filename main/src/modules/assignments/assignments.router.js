@@ -33,7 +33,7 @@ function makeAssignmentsRouter() {
     }
   });
 
-  router.post("/", requireRole("INSTRUCTOR"), async (req, res, next) => {
+  router.post("/", requireRole("INSTRUCTOR", "ADMIN"), async (req, res, next) => {
     try {
       const data = createAssignmentSchema.parse(req.body);
       const assignment = await assignmentsService.createAssignment({ actor: req.user, ...data });

@@ -1,14 +1,24 @@
 const express = require("express");
 const { authRequired } = require("../../middleware/auth");
 const { requireRole } = require("../../middleware/rbac");
-const { createSessionSchema } = require("./sessions.schema");
+const { createSessionSchema, listSessionsQuerySchema } = require("./sessions.schema");
 const sessionsService = require("./sessions.service");
 
 function makeSessionsRouter() {
   const router = express.Router();
   router.use(authRequired);
 
-  router.post("/", requireRole("INSTRUCTOR", "PROCTOR"), async (req, res, next) => {
+  router.get("/", async (req, res, next) => {
+    try {
+      const query = listSessionsQuerySchema.parse(req.query);
+      const result = await sessionsService.listSessions({ actor: req.user, ...query });
+      return res.status(200).json(result);
+    } catch (e) {
+      return next(e);
+    }
+  });
+
+  router.post("/", requireRole("INSTRUCTOR", "PROCTOR", "ADMIN"), async (req, res, next) => {
     try {
       const data = createSessionSchema.parse(req.body);
       const session = await sessionsService.createSession({ actor: req.user, ...data });
@@ -18,7 +28,7 @@ function makeSessionsRouter() {
     }
   });
 
-  router.post("/:sessionId/activate", requireRole("PROCTOR"), async (req, res, next) => {
+  router.post("/:sessionId/activate", requireRole("PROCTOR", "ADMIN"), async (req, res, next) => {
     try {
       const session = await sessionsService.activateSession({ actor: req.user, sessionId: req.params.sessionId });
       return res.status(200).json(session);
@@ -27,7 +37,7 @@ function makeSessionsRouter() {
     }
   });
 
-  router.post("/:sessionId/lock", requireRole("PROCTOR"), async (req, res, next) => {
+  router.post("/:sessionId/lock", requireRole("PROCTOR", "ADMIN"), async (req, res, next) => {
     try {
       const session = await sessionsService.lockSession({ actor: req.user, sessionId: req.params.sessionId });
       return res.status(200).json(session);
@@ -40,4 +50,3 @@ function makeSessionsRouter() {
 }
 
 module.exports = { makeSessionsRouter };
-

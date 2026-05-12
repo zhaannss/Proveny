@@ -18,7 +18,7 @@ const registerSchema = z.object({
   password: passwordSchema,
   firstName: z.string().min(1).max(100),
   lastName: z.string().min(1).max(100),
-});
+}).strict();
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -29,5 +29,25 @@ const refreshSchema = z.object({
   refreshToken: z.string().min(20),
 });
 
-module.exports = { registerSchema, loginSchema, refreshSchema };
+const forgotPasswordSchema = z.object({
+  email: z.string().email(),
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(1),
+  newPassword: passwordSchema,
+});
+
+const resendVerificationSchema = z.object({
+  email: z.string().email(),
+});
+
+module.exports = {
+  registerSchema,
+  loginSchema,
+  refreshSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+  resendVerificationSchema,
+};
 

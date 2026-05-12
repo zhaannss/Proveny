@@ -15,11 +15,13 @@ function toAssignmentResponse(a) {
 
 async function createAssignment({ actor, courseId, title, weekNumber, expectedScore, dueDate }) {
   const prisma = getPrisma();
-  if (actor.role !== "INSTRUCTOR") throw forbidden("Only INSTRUCTOR role can perform this action");
+  if (!["INSTRUCTOR", "ADMIN"].includes(actor.role)) throw forbidden("Only INSTRUCTOR/ADMIN can perform this action");
 
   const course = await prisma.course.findUnique({ where: { id: courseId } });
   if (!course) throw notFound(`Course with id '${courseId}' not found`);
-  if (course.instructorId !== actor.id) throw forbidden("Cannot create assignments for another instructor's course");
+  if (actor.role === "INSTRUCTOR" && course.instructorId !== actor.id) {
+    throw forbidden("Cannot create assignments for another instructor's course");
+  }
 
   const a = await prisma.assignment.create({
     data: {

@@ -49,7 +49,7 @@ paths:
   /auth/register:
     post:
       tags: [Auth]
-      summary: Register a new user and receive JWT tokens
+      summary: Register a new student and enqueue verification email
       security: []
       requestBody:
         required: true
@@ -76,11 +76,16 @@ paths:
               lastName: "Seitkali"
       responses:
         "201":
-          description: Registration successful
+          description: Registration successful; email verification is required before login
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthTokens"
+                type: object
+                properties:
+                  message:
+                    type: string
+              example:
+                message: "Registration successful. Please check your email to verify your account before logging in."
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
@@ -131,7 +136,7 @@ paths:
   /auth/refresh:
     post:
       tags: [Auth]
-      summary: Refresh access token using refresh token
+      summary: Rotate refresh token and issue a new access token
       security: []
       requestBody:
         required: true
@@ -147,7 +152,7 @@ paths:
               refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
       responses:
         "200":
-          description: New access token issued
+          description: New access token and rotated refresh token issued
           content:
             application/json:
               schema:
@@ -164,12 +169,114 @@ paths:
   /auth/logout:
     post:
       tags: [Auth]
-      summary: Invalidate refresh token
+      summary: Revoke all refresh tokens for the authenticated user
       responses:
         "204":
           description: Logged out successfully
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /auth/verify-email:
+    get:
+      tags: [Auth]
+      summary: Verify a newly registered account with an emailed token
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Email verified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /auth/resend-verification:
+    post:
+      tags: [Auth]
+      summary: Enqueue a new verification email for an unverified account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Verification resend accepted
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Enqueue a password reset email
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Password reset request accepted
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Reset password with emailed token and revoke existing sessions
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, newPassword]
+              properties:
+                token:
+                  type: string
+                newPassword:
+                  type: string
+                  minLength: 8
+      responses:
+        "200":
+          description: Password reset successful
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
         "500":
           $ref: "#/components/responses/InternalServerError"
 
@@ -949,6 +1056,24 @@ paths:
         "500":
           $ref: "#/components/responses/InternalServerError"
 
+  /queue/jobs:
+    get:
+      tags: [Queue]
+      summary: Inspect BullMQ email, analysis, and maintenance queue counts
+      responses:
+        "200":
+          description: Queue job counts and recent waiting/active/failed jobs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueJobStatsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
   # ============================================================
   # REPORTS
   # ============================================================
@@ -1690,6 +1815,39 @@ components:
                 enum: [PENDING, CLEARED, CONFIRMED_AI, ESCALATED]
         meta:
           $ref: "#/components/schemas/PaginationMeta"
+
+    QueueJobStatsResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                enum: [email, analysis, maintenance]
+              counts:
+                type: object
+                additionalProperties:
+                  type: integer
+              recentJobs:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+                    attemptsMade:
+                      type: integer
+                    timestamp:
+                      type: string
+                      format: date-time
+                    failedReason:
+                      type: string
+                      nullable: true
 
     CohortStatsResponse:
       type: object

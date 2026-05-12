@@ -1,85 +1,94 @@
-# SylLab Backend (Express + JavaScript + Prisma + PostgreSQL + Redis)
+# SylLab Backend
 
-This repository implements the **mandatory authentication + authorization baseline** (register/login/refresh/logout, JWT access+refresh, RBAC, rate limiting, CORS) and the start of the **SylLab core workflow** (courses/sessions/baselines with AST-based scoring).
+Production-oriented Express + Prisma backend for anti-plagiarism code forensics. It supports verified auth, RBAC, proctored baselines, assignment submissions, asynchronous analysis, email notifications, queue visibility, and reports.
 
 ## Requirements
 
 - Node.js 20+
 - PostgreSQL 15+
 - Redis 7+
+- SMTP provider credentials such as Mailtrap, Brevo, SendGrid, or another SMTP service
 
 ## Setup
 
-1. Install dependencies
-
 ```bash
 npm install
-```
-
-2. Create `.env` from template
-
-```bash
 copy .env.example .env
-```
-
-3. Ensure PostgreSQL + Redis are running
-
-- Update `DATABASE_URL` and `REDIS_URL` in `.env` to match your local setup.
-
-4. Generate Prisma client
-
-```bash
 npm run prisma:generate
-```
-
-5. Apply DB schema
-
-This repo includes a baseline migration SQL generated from `prisma/schema.prisma` in `prisma/migrations/00000000000000_init/`.
-
-To apply migrations against your database:
-
-```bash
 npm run prisma:migrate
-```
-
-6. Seed an initial admin (so you can use `/users` admin endpoints)
-
-```bash
 npm run seed
 ```
 
-Defaults:
-- `SEED_ADMIN_EMAIL=admin@syllab.local`
-- `SEED_ADMIN_PASSWORD=AdminPass123!`
+Edit `.env` before running the app. `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, and `JWT_REFRESH_SECRET` are mandatory. SMTP values are required for a real defense demo because verification and business emails are queued through the email worker.
 
-7. Run the API
+## Run
+
+Start the API:
 
 ```bash
 npm run dev
 ```
 
-## API
+Start workers in separate terminals:
 
-- Base URL: `http://localhost:3000/api/v1`
-- Swagger UI: `http://localhost:3000/docs`
+```bash
+npm run worker:email
+npm run worker:analysis
+npm run worker:maintenance
+```
 
-### Auth flow (baseline)
+API base URL: `http://localhost:3000/api/v1`  
+Swagger UI: `http://localhost:3000/docs`
 
-- `POST /auth/register` (rate limited: 5/min/IP)
-- `POST /auth/login` (rate limited: 5/min/IP)
-- `POST /auth/refresh` (rate limited: 5/min/IP)
-- `POST /auth/logout` (revokes all refresh tokens for the current user)
+## Auth Flow
 
-### Roles (RBAC)
+```text
+POST /api/v1/auth/register         -> queues verification email
+GET  /api/v1/auth/verify-email     -> activates account
+POST /api/v1/auth/login            -> returns accessToken + refreshToken
+POST /api/v1/auth/refresh          -> rotates refresh token + access token
+POST /api/v1/auth/logout           -> revokes all refresh tokens
+POST /api/v1/auth/forgot-password  -> queues password reset email
+POST /api/v1/auth/reset-password   -> resets password and revokes sessions
+```
 
-Implemented roles match schema: `STUDENT`, `INSTRUCTOR`, `PROCTOR`, `ADMIN`.
+Public registration always creates a `STUDENT`. `INSTRUCTOR`, `PROCTOR`, and `ADMIN` accounts are created through the admin-only `/api/v1/users` endpoints.
 
-Example:
-- `/users/*` requires `ADMIN`
+## Business Workflows
 
-## Notes / Decisions
+1. Instructor/admin creates a course and enrolls students.
+2. Instructor/proctor/admin creates a proctored session.
+3. Proctor/admin activates the session.
+4. Student submits a Week 1 baseline during the active session.
+5. Proctor/admin locks the session, making baselines immutable.
+6. Student submits assignment code only after the locked baseline and before `dueDate`.
+7. Submission queues an async BullMQ analysis job.
+8. Analysis worker creates `AnalysisResult` using trajectory, genealogy, and cohort signals.
+9. Flagged/critical submissions enqueue instructor email notifications.
+10. Instructor records oral interview outcome; the student receives an email.
 
-- **JavaScript-only** implementation (CommonJS). TypeScript is not used.
-- Prisma is pinned to **v6** because the blueprint `schema.prisma` uses the classic `datasource db { url = env("DATABASE_URL") }` format (Prisma v7 changed config format).
-- Refresh tokens are **reusable but revocable**: each refresh token has a `jti` stored in Redis; logout deletes all refresh JTIs for the user.
+## Queue Visibility & Cron
 
+`GET /api/v1/queue/jobs` shows BullMQ counts and recent waiting/active/failed jobs for `email`, `analysis`, and `maintenance`.
+
+The maintenance worker registers a recurring stale-review job:
+
+| Job | Schedule | Purpose |
+|---|---|---|
+| `stale-flag-review` | Monday 09:00 UTC | Notify instructors about high-risk PENDING reviews older than 7 days |
+
+## Testing
+
+```bash
+npm run lint
+npm test
+npx prisma validate
+```
+
+## Architecture Decisions
+
+- Prisma ORM is the only database access layer; raw SQL is not used in application code.
+- SMTP calls never run in API request handlers; email is queued through BullMQ.
+- Refresh tokens are rotated on every refresh and stored by JTI in Redis.
+- Instructor access is scoped to owned courses for submissions, baselines, analysis, queues, and reports.
+- A deterministic trajectory standard deviation fallback of `8` is used until enough cohort data exists.

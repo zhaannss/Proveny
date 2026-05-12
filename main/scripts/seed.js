@@ -12,22 +12,51 @@ async function main() {
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
     console.log("Seed admin already exists:", email);
-    return;
+  } else {
+    const passwordHash = await bcrypt.hash(password, 12);
+    await prisma.user.create({
+      data: {
+        email,
+        passwordHash,
+        firstName: "Admin",
+        lastName: "User",
+        role: "ADMIN",
+        isActive: true,
+        isEmailVerified: true,
+      },
+    });
+    console.log("Seeded admin:", email, "password:", password);
   }
 
-  const passwordHash = await bcrypt.hash(password, 12);
-  await prisma.user.create({
-    data: {
-      email,
-      passwordHash,
-      firstName: "Admin",
-      lastName: "User",
-      role: "ADMIN",
-      isActive: true,
+  const rules = [
+    {
+      technique: "circuit_breaker",
+      prerequisites: ["async_await", "custom_error_hierarchy"],
+      severityWeight: 0.8,
+      description: "Circuit breaker requires async/await and custom error handling foundation",
     },
-  });
+    {
+      technique: "dependency_injection",
+      prerequisites: ["class_based_architecture"],
+      severityWeight: 0.7,
+      description: "Dependency injection requires class-based architecture",
+    },
+    {
+      technique: "service_repository_pattern",
+      prerequisites: ["class_based_architecture", "custom_error_hierarchy"],
+      severityWeight: 0.9,
+      description: "Service repository pattern requires classes and structured errors",
+    },
+  ];
 
-  console.log("Seeded admin:", email, "password:", password);
+  for (const rule of rules) {
+    await prisma.techniquePrerequisite.upsert({
+      where: { technique: rule.technique },
+      update: rule,
+      create: rule,
+    });
+  }
+  console.log("Seeded technique prerequisite rules.");
 }
 
 main()

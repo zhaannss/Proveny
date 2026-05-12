@@ -27,6 +27,7 @@ async function createUser(data) {
       firstName: data.firstName,
       lastName: data.lastName,
       role: data.role,
+      isEmailVerified: true,
     },
   });
   return toUserResponse(user);

@@ -25,7 +25,7 @@ function toSessionResponse(s) {
 
 async function createSession({ actor, courseId, startTime, endTime, networkIsolated }) {
   const prisma = getPrisma();
-  if (!["INSTRUCTOR", "PROCTOR"].includes(actor.role)) throw forbidden("Forbidden");
+  if (!["INSTRUCTOR", "PROCTOR", "ADMIN"].includes(actor.role)) throw forbidden("Forbidden");
 
   const course = await prisma.course.findUnique({ where: { id: courseId } });
   if (!course) throw notFound(`Course with id '${courseId}' not found`);
@@ -43,6 +43,10 @@ async function createSession({ actor, courseId, startTime, endTime, networkIsola
     sessionCode = genCode();
   }
 
+  const start = new Date(startTime);
+  const end = new Date(endTime);
+  if (end <= start) throw conflict("endTime must be after startTime");
+
   const session = await prisma.proctoredSession.create({
     data: {
       courseId,
@@ -50,12 +54,38 @@ async function createSession({ actor, courseId, startTime, endTime, networkIsola
       sessionCode,
       networkIsolated,
       status: "SCHEDULED",
-      startTime: new Date(startTime),
-      endTime: new Date(endTime),
+      startTime: start,
+      endTime: end,
     },
   });
 
   return toSessionResponse(session);
+}
+
+async function listSessions({ actor, courseId, status, page, limit }) {
+  const prisma = getPrisma();
+  const where = {};
+  if (courseId) where.courseId = courseId;
+  if (status) where.status = status;
+
+  if (actor.role === "INSTRUCTOR") {
+    where.course = { instructorId: actor.id };
+  } else if (actor.role === "PROCTOR") {
+    where.proctorId = actor.id;
+  } else if (actor.role === "STUDENT") {
+    where.course = { enrollments: { some: { studentId: actor.id } } };
+  }
+
+  const skip = (page - 1) * limit;
+  const [total, rows] = await Promise.all([
+    prisma.proctoredSession.count({ where }),
+    prisma.proctoredSession.findMany({ where, skip, take: limit, orderBy: { startTime: "desc" } }),
+  ]);
+
+  return {
+    data: rows.map(toSessionResponse),
+    meta: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+  };
 }
 
 async function activateSession({ actor, sessionId }) {
@@ -63,7 +93,7 @@ async function activateSession({ actor, sessionId }) {
   const session = await prisma.proctoredSession.findUnique({ where: { id: sessionId } });
   if (!session) throw notFound(`Session with id '${sessionId}' not found`);
 
-  if (actor.role !== "PROCTOR") throw forbidden("Only PROCTOR role can perform this action");
+  if (!["PROCTOR", "ADMIN"].includes(actor.role)) throw forbidden("Only PROCTOR/ADMIN can perform this action");
   if (session.status !== "SCHEDULED") throw conflict("Session is not in SCHEDULED status");
 
   const updated = await prisma.proctoredSession.update({
@@ -77,7 +107,7 @@ async function lockSession({ actor, sessionId }) {
   const prisma = getPrisma();
   const session = await prisma.proctoredSession.findUnique({ where: { id: sessionId } });
   if (!session) throw notFound(`Session with id '${sessionId}' not found`);
-  if (actor.role !== "PROCTOR") throw forbidden("Only PROCTOR role can perform this action");
+  if (!["PROCTOR", "ADMIN"].includes(actor.role)) throw forbidden("Only PROCTOR/ADMIN can perform this action");
   if (session.status !== "ACTIVE") throw conflict("Session is not in ACTIVE status");
 
   const lockedAt = new Date();
@@ -109,5 +139,5 @@ async function findActiveSessionByCode(sessionCode) {
   return session;
 }
 
-module.exports = { createSession, activateSession, lockSession, findActiveSessionByCode };
+module.exports = { createSession, listSessions, activateSession, lockSession, findActiveSessionByCode };
 

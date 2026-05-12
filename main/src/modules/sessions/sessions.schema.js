@@ -7,5 +7,12 @@ const createSessionSchema = z.object({
   networkIsolated: z.boolean().optional().default(false),
 });
 
-module.exports = { createSessionSchema };
+const listSessionsQuerySchema = z.object({
+  courseId: z.string().uuid().optional(),
+  status: z.enum(["SCHEDULED", "ACTIVE", "LOCKED", "CANCELLED"]).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+module.exports = { createSessionSchema, listSessionsQuerySchema };
 

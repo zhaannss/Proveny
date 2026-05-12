@@ -20,6 +20,8 @@ const { makeBaselinesRouter } = require("./modules/baselines/baselines.router");
 const { makeAssignmentsRouter } = require("./modules/assignments/assignments.router");
 const { makeSubmissionsRouter } = require("./modules/submissions/submissions.router");
 const { makeAnalysisRouter } = require("./modules/analysis/analysis.router");
+const { makeActionQueueRouter } = require("./modules/actionQueue/actionQueue.router");
+const { makeReportsRouter } = require("./modules/reports/reports.router");
 const { notFound } = require("./utils/httpErrors");
 
 function loadOpenApiSpec() {
@@ -62,9 +64,10 @@ function createApp() {
 
   const loginRateLimit = rateLimit(authLimiter, (req) => `login:${ipKey(req)}`);
   const registerRateLimit = rateLimit(authLimiter, (req) => `register:${ipKey(req)}`);
+  const authGeneralRateLimit = rateLimit(authLimiter, (req) => `auth:${ipKey(req)}`);
 
   const api = express.Router();
-  api.use("/auth", makeAuthRouter({ loginRateLimit, registerRateLimit }));
+  api.use("/auth", makeAuthRouter({ loginRateLimit, registerRateLimit, authGeneralRateLimit }));
   api.use("/users", makeUsersRouter());
   api.use("/courses", makeCoursesRouter());
   api.use("/sessions", makeSessionsRouter());
@@ -72,6 +75,8 @@ function createApp() {
   api.use("/assignments", makeAssignmentsRouter());
   api.use("/submissions", makeSubmissionsRouter({ maxFileSizeMb: 5 }));
   api.use("/analysis", makeAnalysisRouter());
+  api.use("/queue", makeActionQueueRouter());
+  api.use("/reports", makeReportsRouter());
 
   app.use("/api/v1", api);
 

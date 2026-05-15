@@ -1,0 +1,96 @@
+SylLab — Security Analysis
+Threat Model & Security Architecture | Version 1.0
+1. STRIDE Threat Model
+STRIDE analysis covers the six threat categories: Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, and Elevation of Privilege. Each threat is analyzed with concrete mitigations implemented in SylLab.
+1.1 JWT Tampering Prevention & Secret Rotation Plan
+Algorithm: HS256 (HMAC-SHA256) — asymmetric RS256 can be adopted for multi-service setup
+Access token TTL: 15 minutes — short enough to limit exposure if token is stolen
+Refresh token TTL: 7 days — stored server-side in Redis with user binding (not just cookie)
+Secret minimum length: 32 characters enforced by Zod validation on startup
+Secret rotation procedure:
+Generate new JWT_SECRET and JWT_REFRESH_SECRET
+Deploy new env vars — server accepts tokens signed with EITHER old or new secret for 15min grace period (dual-verify window)
+After 15 minutes (all old access tokens expired): disable old secret
+Force refresh token re-validation: invalidate all Redis refresh token entries
+Users are transparently re-authenticated on next refresh token use
+Rotation recommended: every 90 days or immediately upon suspected compromise
+1.2 SQL Injection Prevention (Prisma Layer)
+Prisma ORM generates parameterized prepared statements for ALL queries — no string interpolation
+Example: prisma.submission.findMany({ where: { studentId: userId } }) — userId is bound as parameter, never concatenated
+Zod validates all input shapes before they reach service layer — unexpected fields are stripped
+No raw SQL usage except in analytics (cohort window query) — that query uses $queryRaw with typed parameters only
+PostgreSQL user for application has: SELECT, INSERT, UPDATE on app tables only — no DROP, no TRUNCATE, no pg_catalog access
+1.3 Audit Log Structure (Repudiation Prevention)
+The AuditLog table is append-only — no UPDATE or DELETE endpoints exist for it. Structure:
+model AuditLog {
+id           String   @id @default(uuid())
+userId       String?  // null for system-generated events
+action       String   // enum-like: BASELINE_SUBMITTED, BASELINE_LOCKED,
+//   SUBMISSION_FLAGGED, OUTCOME_RECORDED, USER_CREATED
+resourceType String   // Baseline | Submission | User | Session | AnalysisResult
+resourceId   String
+oldValue     Json?    // snapshot before change (null for creates)
+newValue     Json?    // snapshot after change (null for deletes)
+ipAddress    String?  // from X-Forwarded-For header (behind proxy)
+createdAt    DateTime @default(now())
+// NO updatedAt — append only by design
+}
+// Key events logged:
+// - Every baseline submission (with hash)
+// - Every session lock action (with proctorId)
+// - Every analysis result creation (with ensemble score)
+// - Every interview outcome recording (with instructorId)
+// - Every failed auth attempt (with IP)
+// - Every admin user modification
+1.4 Denial of Service — Rate Limiting Design
+Redis-based token bucket implementation using ioredis. Two tiers of rate limiting:
+Auth endpoints (/auth/login, /auth/refresh): 5 requests per minute per IP address
+Gemini LLM endpoints: 10 requests per minute per instructorId
+General API: 200 requests per minute per userId (soft limit, returns 429 with Retry-After header)
+Token bucket algorithm:
+// Key: ratelimit:auth:{ip} or ratelimit:gemini:{instructorId}
+// TTL: 60 seconds (sliding window)
+async function checkRateLimit(key: string, limit: number): Promise<boolean> {
+const current = await redis.incr(key);
+if (current === 1) await redis.expire(key, 60);  // set TTL on first hit
+return current <= limit;  // false = rate limited
+}
+1.5 Authorization Middleware — RBAC Design
+RBAC is enforced at the route level using a middleware factory pattern:
+// middleware/rbac.ts
+export const requireRole = (...roles: Role[]) => {
+return (req: Request, res: Response, next: NextFunction) => {
+const user = req.user;  // populated by auth.ts JWT middleware
+if (!user || !roles.includes(user.role)) {
+return res.status(403).json({
+statusCode: 403, error: 'Forbidden',
+message: `Requires one of: ${roles.join(', ')}`,
+});
+}
+next();
+};
+};
+// Usage in routes:
+router.get('/queue', requireRole('INSTRUCTOR', 'ADMIN'), queueController.list);
+router.post('/sessions/:id/lock', requireRole('PROCTOR', 'INSTRUCTOR'), sessionController.lock);
+router.get('/users', requireRole('ADMIN'), userController.list);
+Resource ownership checks are a SECOND layer: even with correct role, students can only access their own data
+Ownership check example: if (submission.studentId !== req.user.id && req.user.role === 'STUDENT') return 403
+2. Secret Management
+2.1 Required Secrets & Storage
+2.2 Startup Validation Guard
+The application REFUSES to start if any required secret is missing or invalid. This is enforced by the Zod schema in src/config/env.ts (see Architecture document). There are no hardcoded fallback values for secrets.
+JWT_SECRET and JWT_REFRESH_SECRET must be at minimum 32 characters (Zod: z.string().min(32))
+DATABASE_URL must be a valid URL (Zod: z.string().url())
+GEMINI_API_KEY must be at minimum 10 characters (Zod: z.string().min(10))
+.env file is listed in .gitignore — never committed to version control
+.env.example contains all variable names with placeholder values (e.g. JWT_SECRET=REPLACE_ME_MIN_32_CHARS)
+2.3 Additional Security Measures
+HTTPS only in production — HTTP requests redirect to HTTPS
+Helmet.js middleware: sets Content-Security-Policy, X-Frame-Options, X-Content-Type-Options
+CORS: whitelist of allowed origins only (no wildcard * in production)
+File uploads: validated for MIME type and extension before AST parsing
+Error responses: never expose stack traces or internal details in production (NODE_ENV=production suppresses them)
+Database: PostgreSQL SSL mode required in production (sslmode=require in DATABASE_URL)
+Prisma: schema-level constraints (unique, not null) provide DB-level safety net beyond application validation
+— End of Security Analysis Document —

@@ -1,0 +1,242 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== ENUMS ====================
+enum Role {
+  STUDENT
+  INSTRUCTOR
+  PROCTOR
+  ADMIN
+}
+
+enum SessionStatus {
+  SCHEDULED
+  ACTIVE
+  LOCKED
+  CANCELLED
+}
+
+enum RiskLevel {
+  NORMAL   // score < 1.5
+  MONITOR  // 1.5 <= score < 2.0
+  FLAGGED  // 2.0 <= score < 2.5
+  CRITICAL // score >= 2.5
+}
+
+enum InterviewOutcome {
+  PENDING
+  CLEARED
+  CONFIRMED_AI
+  ESCALATED
+}
+
+// ==================== MODELS ====================
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  role         Role     @default(STUDENT)
+  isActive     Boolean  @default(true)
+
+  // Email verification
+  isEmailVerified          Boolean   @default(false)
+  emailVerificationToken   String?   @unique
+  emailVerificationExpires DateTime?
+
+  // Password reset
+  passwordResetToken   String?   @unique
+  passwordResetExpires DateTime?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  instructedCourses Course[]           @relation("InstructorCourses")
+  proctored         ProctoredSession[] @relation("ProctorSessions")
+  enrollments       CourseEnrollment[]
+  baselines         Baseline[]
+  submissions       Submission[]
+  auditLogs         AuditLog[]
+
+  @@index([email])
+  @@index([role])
+  @@index([emailVerificationToken])
+  @@index([passwordResetToken])
+}
+
+model Course {
+  id                String   @id @default(uuid())
+  name              String
+  code              String   @unique // e.g. CS301-2025
+  instructorId      String
+  weeklyTargets     Json // {1: 20, 2: 25, 3: 30, ...} expected scores per week
+  thresholdOverride Json? // optional per-course threshold overrides
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  instructor  User               @relation("InstructorCourses", fields: [instructorId], references: [id])
+  enrollments CourseEnrollment[]
+  sessions    ProctoredSession[]
+  assignments Assignment[]
+  baselines   Baseline[]
+
+  @@index([instructorId])
+  @@index([code])
+}
+
+model CourseEnrollment {
+  id         String   @id @default(uuid())
+  courseId   String
+  studentId  String
+  enrolledAt DateTime @default(now())
+
+  course  Course @relation(fields: [courseId], references: [id])
+  student User   @relation(fields: [studentId], references: [id])
+
+  @@unique([courseId, studentId])
+  @@index([courseId])
+  @@index([studentId])
+}
+
+model ProctoredSession {
+  id              String        @id @default(uuid())
+  courseId        String
+  proctorId       String
+  sessionCode     String        @unique // 6-char alphanumeric join code
+  networkIsolated Boolean       @default(false)
+  status          SessionStatus @default(SCHEDULED)
+  startTime       DateTime
+  endTime         DateTime
+  lockedAt        DateTime?
+  createdAt       DateTime      @default(now())
+
+  course    Course    @relation(fields: [courseId], references: [id])
+  proctor   User      @relation("ProctorSessions", fields: [proctorId], references: [id])
+  baselines Baseline[]
+
+  @@index([courseId])
+  @@index([sessionCode])
+  @@index([status])
+}
+
+model Baseline {
+  id                  String   @id @default(uuid())
+  studentId           String
+  courseId            String
+  sessionId           String
+  contentHash         String   @unique // SHA-256, tamper detection
+  rawCode             String   @db.Text
+  metrics             Json
+  sophisticationScore Float
+  isLocked            Boolean  @default(false) // true after session lock
+  submittedAt         DateTime @default(now())
+
+  student User             @relation(fields: [studentId], references: [id])
+  course  Course           @relation(fields: [courseId], references: [id])
+  session ProctoredSession @relation(fields: [sessionId], references: [id])
+
+  @@unique([studentId, courseId]) // ONE baseline per student per course
+  @@index([studentId])
+  @@index([courseId])
+  @@index([contentHash])
+}
+
+model Assignment {
+  id            String   @id @default(uuid())
+  courseId      String
+  title         String
+  weekNumber    Int
+  expectedScore Float // target sophistication for that week
+  dueDate       DateTime
+  createdAt     DateTime @default(now())
+
+  course      Course       @relation(fields: [courseId], references: [id])
+  submissions Submission[]
+
+  @@index([courseId])
+  @@index([weekNumber])
+}
+
+model Submission {
+  id                  String   @id @default(uuid())
+  assignmentId        String
+  studentId           String
+  rawCode             String   @db.Text
+  contentHash         String
+  metrics             Json
+  sophisticationScore Float
+  submittedAt         DateTime @default(now())
+
+  assignment     Assignment     @relation(fields: [assignmentId], references: [id])
+  student        User           @relation(fields: [studentId], references: [id])
+  analysisResult AnalysisResult?
+
+  @@index([assignmentId])
+  @@index([studentId])
+  @@index([sophisticationScore])
+  @@index([submittedAt])
+}
+
+model AnalysisResult {
+  id                 String           @id @default(uuid())
+  submissionId       String           @unique
+  trajectoryZScore   Float
+  genealogyPenalty   Float
+  cohortOutlierScore Float
+  ensembleScore      Float
+  riskLevel          RiskLevel
+  compressedWeeks    Float
+  violations         Json
+  llmGuidance        String?          @db.Text
+  interviewOutcome   InterviewOutcome @default(PENDING)
+  interviewNotes     String?          @db.Text
+  analyzedAt         DateTime         @default(now())
+  reviewedAt         DateTime?
+
+  submission Submission @relation(fields: [submissionId], references: [id])
+
+  @@index([riskLevel])
+  @@index([ensembleScore])
+  @@index([interviewOutcome])
+}
+
+model TechniquePrerequisite {
+  id             String   @id @default(uuid())
+  technique      String   @unique // e.g. 'circuit_breaker'
+  prerequisites  String[]
+  severityWeight Float    @default(0.5)
+  description    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([technique])
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  userId       String?
+  action       String
+  resourceType String
+  resourceId   String
+  oldValue     Json?
+  newValue     Json?
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([resourceType, resourceId])
+  @@index([action])
+  @@index([createdAt])
+}
+

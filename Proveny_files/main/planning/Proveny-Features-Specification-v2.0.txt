@@ -1,0 +1,262 @@
+PROVENY
+Anti-Plagiarism Code Forensics Platform
+Features Specification Document
+Version 2.0  |  Express (Node.js) + Prisma + PostgreSQL + JPlag
+Updated with: Drift-Aware Profiling · Ultra-Low FPR Thresholds · JPlag Integration
+1. Project Overview
+SylLab is a forensic code analysis platform designed to detect AI-assisted code generation among students. Unlike traditional plagiarism checkers that detect copy-paste, SylLab establishes proctored authentic baselines during Week 1 and compares subsequent submissions against expected learning progression curves.
+The system flags anomalies such as 'impossible jumps' - advanced architectural patterns appearing without evidence of prerequisite intermediate patterns.
+Version 2.0 changes: Added Drift-Aware Student Profiling (source: Code Authorship Attribution survey, cyberlab.usask.ca), Ultra-Low FPR threshold calibration (source: Binoculars, arxiv 2401.12070), and replaced MOSS with JPlag for structural plagiarism detection.
+2. User Roles & Actors
+2.1 Role Overview
+2.2 Student
+Register and create a profile linked to a specific course section
+Participate in the proctored Week 1 baseline session (network-isolated, 30-minute in-class coding)
+Submit code assignments for forensic analysis
+View personal sophistication score and progression dashboard
+Receive notifications when flagged for oral review
+View flagged submission details and explanation of anomaly detected
+Appeal flagged submissions with written justification
+2.3 Instructor
+Create and manage courses and cohorts
+Configure weekly expected sophistication targets and progression curves
+Trigger and monitor proctored baseline sessions
+View Instructor Action Queue - prioritized list of flagged students requiring oral interviews
+View detailed forensic analysis report per submission (delta scores, genealogy violations, cohort percentile)
+Mark oral interview outcomes (cleared / confirmed / escalated)
+Export cohort reports to CSV/PDF
+Configure Gemini API integration for LLM-generated interview guidance
+View cohort-wide sophistication distribution heatmaps per week
+NEW: View drift-aware profile chart per student - historical style evolution over semester
+NEW: View JPlag similarity clusters for peer collusion detection
+2.4 Admin
+Manage all users (create, disable, reassign roles)
+Configure global scoring thresholds - NEW: thresholds derived from ROC curve analysis, not arbitrary values
+Monitor system health dashboard (queue depth, API latency, error rates)
+Manage prerequisite dependency graph (add/remove technique → prerequisite mappings)
+Access full audit log of all system events
+Manage environment configuration and secret rotation
+NEW: Access FPR calibration dashboard - review false positive rate per cohort and adjust thresholds
+2.5 Proctor
+Initiate and terminate proctored baseline sessions
+Confirm network isolation status of session
+Lock submissions after session ends (immutability enforcement)
+View session attendance roster
+3. Feature List by Role
+3.1 Authentication & Access
+JWT-based authentication for all roles
+Role-based access control (RBAC) enforced at middleware level
+Session expiry and token refresh mechanism
+Password reset via email (SMTP integration)
+3.2 Proctored Baseline Capture (Week 1 Fingerprinting)
+Instructor/Proctor creates a proctored session with a start/end time window
+Student joins session using a unique session code
+System records network isolation confirmation flag set by proctor
+Student submits code within the session window
+System immediately computes 15+ AST-derived baseline metrics from submitted code
+Baseline record is cryptographically hashed (SHA-256 of content) and marked immutable
+No modifications allowed after session lock - enforced at database level (updatedAt guard)
+3.3 Sophistication Scoring Engine
+Parse submitted JavaScript/TypeScript code using AST analysis (Babel)
+Compute score (0-100) across 5 major dimensions:
+Error handling tier (0-5 points)
+Architectural tier (0-5 points)
+Type safety tier (0-3 points)
+Advanced techniques score (0-5 points)
+Code organization & naming verbosity (0-2 points)
+Score stored with full metric breakdown (each of 15+ sub-indicators stored individually)
+3.4 One-Shot Comparison Engine
+Compare any single submission against Week 1 baseline (no git history required)
+Calculate 'compressed progression weeks' = (current_score - baseline_score) / expected_weekly_increment
+Generate trajectory delta z-score: (current - expected) / std
+NEW: std is now DYNAMIC - computed from student's last 3 submissions (drift-aware), not a fixed cohort value
+Compute ensemble risk score (weighted sum of three signals)
+Return human-readable explanation of each signal contribution
+Source for dynamic std: 'Code Authorship Attribution: Methods and Challenges' (cyberlab.usask.ca) - 'evolving style as a practical challenge; suggests self-learning / using recent work.' Referenced as [8][23] in research document.
+3.5 Technique Genealogy Validation
+Maintain prerequisite dependency graph in database
+Examples: circuit_breaker requires [decorators, context_managers]; metaclass requires [basic_class, inheritance]
+For each submission, detect all advanced techniques present
+Verify each prerequisite technique appears in student history OR same submission
+Assign +0.5 penalty per missing prerequisite to ensemble score
+Report specific violations: 'Used circuit_breaker without evidence of decorator mastery'
+3.6 Cohort Comparison Engine
+Aggregate all sophistication scores for a given course + week
+Calculate percentile rank of student submission using PostgreSQL PERCENT_RANK()
+Identify outliers: students above 90th percentile contribute non-zero cohort signal
+Calculate z-score of cohort distribution (STDDEV, AVG via PostgreSQL window functions)
+Cohort statistics cached in Redis with TTL of 1 hour (recalculated on new submissions)
+3.7 Instructor Action Queue
+Automatically populate queue when ensemble score >= threshold (see Section 5.2 for updated thresholds)
+Priority ordering: Critical → Significant → Monitor
+Each queue item shows: student name, week, ensemble score, top 3 anomaly reasons
+Instructor can click into full forensic report per submission
+LLM-generated interview question suggestions (Gemini 3.1 Flash Lite) per flagged submission
+Instructor records interview outcome: Cleared / Confirmed AI-Assisted / Escalated
+NEW: Outcome data stored and used for ongoing FPR calibration (see Section 3.10)
+3.8 Drift-Aware Student Profiling  ✦ NEW
+Source: 'Code Authorship Attribution: Methods and Challenges' (cyberlab.usask.ca), section on evolving author style. Referenced as [8][23][50] in the research document.
+The student style profile is no longer a static Week 1 snapshot. It is a time-weighted distribution that adapts as the student legitimately grows over the semester. This prevents false positives for students who improve naturally.
+Store all per-week scores and metric vectors in student history table
+For z-score calculation: use rolling std from last N submissions (default N=3, configurable by admin)
+If fewer than N submissions exist: fall back to cohort std (existing behavior)
+Instructor dashboard: show per-student progression chart - expected curve vs. actual trajectory
+System detects 'drift events': natural style changes vs. suspicious jumps
+SQL implementation (replaces fixed std_deviation):
+SELECT STDDEV(score) FROM submissions WHERE student_id = $1 ORDER BY week_number DESC LIMIT 3
+3.9 JPlag Structural Similarity Detection  ✦ NEW (replaces MOSS)
+Source: 'Code Authorship Attribution: Methods and Challenges' (cyberlab.usask.ca) and SylLab-Forensics research document - 'recent JPlag work emphasizes combining automated similarity with instructor review and enhancing resilience against automated obfuscation.' Referenced as [24] in research document.
+JPlag replaces MOSS as the structural plagiarism detection layer. JPlag is open-source, supports JavaScript/TypeScript, and provides a REST API wrapper - easier to integrate than MOSS (no official API).
+On each batch submission deadline: trigger JPlag analysis across all submissions in a course+week
+JPlag compares token/parse-tree structure - not raw text - resistant to variable renaming
+Results: pairwise similarity matrix stored in PostgreSQL
+Flag pairs with similarity > configurable threshold (default: 80%)
+Instructor view: similarity clusters - visual graph of suspected collusion groups
+JPlag signal is independent secondary evidence - does not feed into ensemble score directly
+Instructor must manually review and record outcome (collusion is not auto-confirmed)
+Integration approach:
+Deploy JPlag REST API as a sidecar service (Docker container)
+Node.js backend calls JPlag API with submission files after deadline passes
+Parse similarity report, store results, surface to instructor dashboard
+3.10 FPR Calibration Engine  ✦ NEW
+Source: Binoculars paper (arxiv.org/pdf/2401.12070), section on evaluation at ultra-low false positive rates - 'detection should be judged at low-FPR operating points because harm is dominated by false accusations.' Referenced as [4][42][46] in research document.
+The current thresholds (1.5 / 2.0 / 2.5) are initial defaults. After accumulating real outcome data, the admin can run FPR calibration to derive evidence-based thresholds.
+All interview outcomes (Cleared / Confirmed / Escalated) are stored as ground truth labels
+Admin can export: ensemble_score + outcome pairs as CSV
+Offline calibration: run ROC curve analysis (Python/sklearn, one-time script)
+Admin sets new thresholds in system config targeting desired FPR (recommended: FPR ≤ 5%)
+System logs threshold change with timestamp and justification in audit log
+Dashboard: show current estimated FPR based on recent outcomes
+This does not require ML infrastructure in production - calibration is an offline admin task run periodically after sufficient data accumulates (recommended: minimum 50 resolved cases).
+3.11 Historical Trajectory Tracking (Extra Credit)
+Track all submissions over time per student per course
+Detect regression patterns: Week 5 score lower than Week 4 (unusual drop)
+Detect acceleration patterns: sudden large jumps across multiple consecutive weeks
+NEW: Historical std used as drift-aware std in z-score calculation (feeds into Section 3.8)
+3.12 Git History Forensics (Extra Credit)
+Accept git repository upload or URL
+Parse git log --numstat to extract per-commit line additions/deletions and timestamps
+Detect 'big bang' pattern: single commit containing >80% of total code
+Calculate temporal entropy using Shannon entropy formula on commit timestamp distribution
+Git score adds 10% weight to ensemble (adjusted weights: 45/25/15/10/5)
+4. Business Workflows
+4.1 Week 1 Proctored Session Workflow
+Instructor creates a course and configures Week 1 session (date/time window)
+Proctor confirms in-class attendance and network isolation
+Instructor opens session - system generates unique session code
+Students join session using code within the time window
+Students write code in their local environment (offline) for 30 minutes
+Students upload code file before session close
+System runs AST analysis and stores baseline metrics with SHA-256 hash
+Proctor locks the session - no further uploads accepted
+Baseline record flagged as immutable in database
+4.2 Assignment Submission & Analysis Workflow
+Instructor creates an assignment with week number and expected sophistication target
+Student uploads code file to the submission endpoint
+System validates file (language detection, size limit, syntax check)
+System runs AST-based sophistication scoring (15+ metrics)
+System fetches student's Week 1 baseline from database
+NEW: System fetches last 3 submissions to compute drift-aware std
+Trajectory delta calculated: z-score vs. expected progression (using dynamic std)
+Genealogy validation: scan codebase for prerequisite violations
+Cohort statistics fetched from Redis cache (or recomputed if stale)
+Ensemble score computed: 0.5×trajectory + 0.3×genealogy + 0.2×cohort
+NEW: If score >= calibrated threshold (not hardcoded 1.5): entry created in Instructor Action Queue
+Full forensic report stored and accessible to instructor
+4.3 JPlag Batch Analysis Workflow  ✦ NEW
+Triggered automatically when assignment deadline passes
+System collects all submissions for course + week
+Sends submission files to JPlag REST API sidecar
+JPlag returns pairwise similarity matrix
+Pairs above threshold (default 80%) stored as potential collusion flags
+Instructor notified: 'N suspicious pairs found in Week X submissions'
+Instructor reviews similarity clusters - independent of ensemble score queue
+4.4 Instructor Review Workflow
+Instructor opens Action Queue, sorted by ensemble score (highest first)
+Clicks on flagged student - opens Forensic Report page
+Reviews: trajectory delta breakdown, genealogy violations, cohort percentile, LLM interview suggestions
+NEW: Views drift-aware profile chart - is this jump unusual given this student's personal trajectory?
+NEW: Views JPlag similarity report - is this student in a suspected collusion cluster?
+Schedules and conducts oral explanation interview
+Records outcome: Cleared / Confirmed / Escalated
+Outcome automatically added to FPR calibration dataset
+4.5 LLM Interview Guidance Workflow
+Triggered synchronously when instructor views a flagged submission detail page
+System constructs prompt containing: technique violations list, sophistication jump summary, week number
+Calls Gemini 3.1 Flash Lite API with rate limiting (max 10 req/min per instructor)
+Returns 3-5 targeted interview questions focusing on specific anomalies
+Questions displayed alongside forensic report
+Result cached per submission_id to avoid duplicate API calls
+5. Constraints & Business Rules
+5.1 Baseline Immutability
+A student may only have ONE baseline per course
+Baseline cannot be updated after the session is locked by proctor
+Any attempt to modify baseline returns HTTP 403 with audit log entry
+Content hash verified on each comparison - mismatch triggers tamper alert
+5.2 Scoring Rules  ✦ UPDATED
+Thresholds below are initial defaults only. After accumulating 50+ resolved cases, Admin should run FPR calibration (Section 3.10) to derive evidence-based values targeting FPR ≤ 5%. Source: Binoculars [4][46].
+Score < 1.5: Normal - no action
+1.5 ≤ Score < 2.0: Minor deviation - monitor (appears in queue, low priority)
+2.0 ≤ Score < 2.5: Significant escalation - flagged for review
+Score ≥ 2.5: Critical anomaly - mandatory oral interview, student notified automatically
+Thresholds are configurable per course by instructor and globally by Admin
+Genealogy penalty: +0.5 per missing prerequisite, capped at +2.0 total
+NEW: z-score std is dynamic (drift-aware) - uses rolling last-3 submissions std when available
+5.3 Session Rules
+A student cannot submit a baseline outside the active session window
+Session window cannot be reopened after proctor locks it
+A student cannot submit an assignment without an existing baseline for that course
+File size limit: 5MB per submission
+Supported languages: JavaScript, TypeScript (AST via Babel)
+5.4 Cohort Rules
+Cohort statistics are only meaningful with >= 5 students in the dataset
+If cohort size < 5 for a given week, cohort signal weight is redistributed to trajectory delta
+Outlier threshold is fixed at 90th percentile (configurable by Admin)
+5.5 JPlag Rules  ✦ NEW
+JPlag analysis runs once per course+week batch, after deadline - not on individual submissions
+Similarity threshold default: 80% (configurable by Admin)
+JPlag results are advisory only - no automated sanctions
+Instructor must manually review and record outcome for each flagged pair
+JPlag service failures: graceful fallback - log error, notify admin, do not block submission workflow
+5.6 LLM Integration Rules
+Gemini API key stored in environment variable  never hardcoded
+Rate limit: 10 requests per minute per instructor (Redis token bucket)
+LLM response cached per submission_id (TTL: 24 hours in Redis)
+If Gemini API fails: return graceful fallback ('LLM guidance unavailable - please review manually')
+LLM is advisory only  no automated decisions based on LLM output
+5.7 FPR Calibration Rules  ✦ NEW
+Minimum 50 resolved cases required before calibration is meaningful
+Calibration is an offline admin task not automated in production
+All threshold changes logged in audit trail with justification
+Recommended target: False Positive Rate ≤ 5% at chosen operating point
+Calibration does not replace human judgment  it informs threshold selection
+5.8 Data Retention
+All submission analyses retained indefinitely (audit trail)
+Oral interview outcomes retained as append-only records
+Audit log entries cannot be deleted  only appended
+NEW: FPR calibration dataset (outcome labels) retained alongside submission records
+6. Summary of Changes from v1.0
+7. What Does NOT Change
+The following core design decisions remain unchanged from v1.0:
+Three-signal ensemble: trajectory z-score (50%) + genealogy penalty (30%) + cohort signal (20%)
+Week 1 proctored baseline as the foundation of all comparisons
+AST-based sophistication scoring via Babel (15+ metrics, 5 dimensions)
+Technique Genealogy dependency graph and DFS/BFS violation detection
+LLM (Gemini) as advisory-only interview guidance - never automated verdict
+Immutability guarantees on baseline records (SHA-256 + DB-level guard)
+Human-in-the-loop: no automated sanctions - all flags require instructor review
+8. Core Algorithms (Updated)
+8.1 Trajectory Z-Score  ✦ UPDATED
+Formula unchanged. std_deviation source changed:
+z = (current_score - expected_score) / std_deviation
+expected = baseline_score + (week_number × expected_weekly_increment)
+std = STDDEV of last 3 submissions  (fallback: cohort std if < 3 exist)
+8.2 Genealogy Validation unchanged
+8.3 Cohort Signal  unchanged
+8.4 Ensemble Score  unchanged
+Ensemble = 0.5 × trajectory_z + 0.3 × genealogy_penalty + 0.2 × cohort_signal
+8.5 JPlag Similarity  ✦ NEW
+Runs independently  does not feed into ensemble. Used as secondary evidence stream.
+similarity(A, B) = JPlag token-based structural comparison score [0..1]
+flag if similarity(A, B) >= 0.80  (configurable)
+9. Academic Sources

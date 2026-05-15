@@ -1,0 +1,150 @@
+SylLab — System Architecture
+Architecture & System Design Document | Version 1.0
+1. Tech Stack
+The following technology decisions were finalized after Week 1 evaluation of project requirements. Each choice is justified based on the forensic analysis nature of the platform.
+1.1 Redis Use Cases
+Rate Limiting: Token bucket per instructor for Gemini API (10 req/min). Key pattern: ratelimit:gemini:{instructorId}
+Cohort Statistics Cache: Aggregated percentile/stddev per course+week. Key: cohort:stats:{courseId}:{week}. TTL: 3600s
+LLM Response Cache: Interview questions per submission. Key: llm:guidance:{submissionId}. TTL: 86400s
+Session Store: Active proctored session state. Key: session:proctored:{sessionId}. TTL: session duration + 30min
+BullMQ Job Queue (Extra Credit): async AST analysis jobs. Queue name: submission-analysis
+2. Folder Structure
+The following ASCII tree represents the exact file layout to be implemented:
+syllab-backend/
+├── src/
+│   ├── app.ts                    # Express app factory, middleware registration
+│   ├── server.ts                 # Entry point, starts HTTP server
+│   ├── config/
+│   │   ├── env.ts                # Zod schema for env validation (startup guard)
+│   │   ├── redis.ts              # Redis client singleton
+│   │   └── prisma.ts             # Prisma client singleton
+│   ├── middleware/
+│   │   ├── auth.ts               # JWT verification middleware
+│   │   ├── rbac.ts               # Role-based access control middleware
+│   │   ├── rateLimiter.ts        # Redis token bucket rate limiter
+│   │   ├── errorHandler.ts       # Global error handler (maps errors to HTTP codes)
+│   │   └── requestLogger.ts      # Audit log middleware (append-only)
+│   ├── modules/
+│   │   ├── auth/
+│   │   │   ├── auth.router.ts    # POST /auth/login, POST /auth/refresh
+│   │   │   ├── auth.service.ts   # JWT sign/verify, bcrypt compare
+│   │   │   └── auth.schema.ts    # Zod schemas for login payloads
+│   │   ├── users/
+│   │   │   ├── users.router.ts   # CRUD for user management (Admin only)
+│   │   │   ├── users.service.ts  # Business logic for user operations
+│   │   │   └── users.schema.ts   # Zod validation schemas
+│   │   ├── courses/
+│   │   │   ├── courses.router.ts # Course + cohort management endpoints
+│   │   │   ├── courses.service.ts
+│   │   │   └── courses.schema.ts
+│   │   ├── sessions/
+│   │   │   ├── sessions.router.ts # Proctored session lifecycle
+│   │   │   ├── sessions.service.ts
+│   │   │   └── sessions.schema.ts
+│   │   ├── submissions/
+│   │   │   ├── submissions.router.ts # File upload + analysis trigger
+│   │   │   ├── submissions.service.ts
+│   │   │   └── submissions.schema.ts
+│   │   ├── baselines/
+│   │   │   ├── baselines.router.ts  # Baseline retrieval (immutable)
+│   │   │   ├── baselines.service.ts
+│   │   │   └── baselines.schema.ts
+│   │   ├── analysis/
+│   │   │   ├── analysis.router.ts   # GET forensic report per submission
+│   │   │   └── analysis.service.ts  # Orchestrates all scoring engines
+│   │   ├── actionQueue/
+│   │   │   ├── queue.router.ts      # Instructor action queue endpoints
+│   │   │   └── queue.service.ts
+│   │   └── reports/
+│   │       ├── reports.router.ts    # CSV/PDF export endpoints
+│   │       └── reports.service.ts
+│   ├── engines/
+│   │   ├── ast/
+│   │   │   ├── parser.ts            # Babel AST parsing wrapper
+│   │   │   ├── sophisticationScorer.ts  # 15+ metric extraction logic
+│   │   │   ├── genealogyValidator.ts    # Prerequisite dependency checking
+│   │   │   └── metrics/
+│   │   │       ├── errorHandling.ts     # Error handling tier scorer
+│   │   │       ├── architecture.ts      # Architecture pattern scorer
+│   │   │       ├── typeSafety.ts        # Type safety scorer
+│   │   │       ├── advancedTechniques.ts
+│   │   │       └── naming.ts            # Naming verbosity scorer
+│   │   ├── ensemble/
+│   │   │   ├── trajectoryDelta.ts       # Z-score trajectory calculation
+│   │   │   ├── cohortOutlier.ts         # Percentile-based cohort signal
+│   │   │   └── ensembleScorer.ts        # Weighted combination 50/30/20
+│   │   ├── git/
+│   │   │   └── gitForensics.ts          # Extra credit: git history analysis
+│   │   └── llm/
+│   │       └── geminiClient.ts          # Gemini API wrapper with rate limit
+│   ├── jobs/
+│   │   ├── submissionProcessor.ts       # BullMQ worker (extra credit)
+│   │   └── jobQueue.ts                  # BullMQ queue definition
+│   └── utils/
+│       ├── hash.ts                      # SHA-256 content hashing
+│       ├── pagination.ts                # Cursor-based pagination helpers
+│       └── logger.ts                    # Winston logger configuration
+├── prisma/
+│   ├── schema.prisma                    # Complete data model definition
+│   └── migrations/                      # Prisma Migrate generated files
+├── tests/
+│   ├── unit/
+│   │   ├── scoring/                     # Unit tests for scoring algorithms
+│   │   └── engines/                     # Unit tests for AST parsing
+│   └── integration/
+│       └── api/                         # Supertest API integration tests
+├── .env                                 # Local environment variables (gitignored)
+├── .env.example                         # Template with all required keys
+├── .env.test                            # Test environment overrides
+├── package.json
+├── tsconfig.json
+└── docker-compose.yml                   # PostgreSQL + Redis for local dev
+3. Environment Strategy
+All configuration is validated at startup using Zod. The application refuses to start if any required variable is missing or invalid — preventing 'hello world' placeholder secrets in production.
+3.1 Environment Variables (.env structure)
+# === Server ===
+NODE_ENV=development              # development | production | test
+PORT=3000
+# === Database ===
+DATABASE_URL=postgresql://syllab_user:password@localhost:5432/syllab_db
+# === Redis ===
+REDIS_URL=redis://localhost:6379
+# === JWT ===
+JWT_SECRET=<min-32-char-random-string>
+JWT_EXPIRES_IN=15m
+JWT_REFRESH_SECRET=<different-min-32-char-string>
+JWT_REFRESH_EXPIRES_IN=7d
+# === Gemini API ===
+GEMINI_API_KEY=<from-google-ai-studio>
+GEMINI_RATE_LIMIT_PER_MIN=10
+# === File Upload ===
+MAX_FILE_SIZE_MB=5
+# === Cohort Cache ===
+COHORT_CACHE_TTL_SECONDS=3600
+# === Scoring Thresholds ===
+THRESHOLD_MONITOR=1.5
+THRESHOLD_FLAG=2.0
+THRESHOLD_CRITICAL=2.5
+3.2 Zod Validation Schema (src/config/env.ts)
+import { z } from 'zod';
+const envSchema = z.object({
+NODE_ENV: z.enum(['development', 'production', 'test']),
+PORT: z.coerce.number().default(3000),
+DATABASE_URL: z.string().url(),
+REDIS_URL: z.string().url(),
+JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
+JWT_EXPIRES_IN: z.string().default('15m'),
+JWT_REFRESH_SECRET: z.string().min(32),
+JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
+GEMINI_API_KEY: z.string().min(10),
+GEMINI_RATE_LIMIT_PER_MIN: z.coerce.number().default(10),
+MAX_FILE_SIZE_MB: z.coerce.number().default(5),
+COHORT_CACHE_TTL_SECONDS: z.coerce.number().default(3600),
+THRESHOLD_MONITOR: z.coerce.number().default(1.5),
+THRESHOLD_FLAG: z.coerce.number().default(2.0),
+THRESHOLD_CRITICAL: z.coerce.number().default(2.5),
+});
+export const env = envSchema.parse(process.env);
+// If any variable is missing/invalid: ZodError thrown at startup — app refuses to start
+3.3 Environment Strategy per Stage
+— End of Architecture Document —
